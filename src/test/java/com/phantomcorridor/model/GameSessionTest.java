@@ -36,6 +36,52 @@ class GameSessionTest {
     }
 
     @Test
+    void phaseEnergyRegeneratesFasterInAWorldWithNoEnemies() {
+        GameSession session = new GameSession();
+        session.newRun("2024");
+        // 入口房没有敌人，切界后当前世界处于「空世界」状态。
+        assertTrue(session.tryShiftWorld());
+        assertEquals(0.0, session.getPlayer().getPhaseEnergy(), 1e-9);
+
+        double dt = 1.0;
+        update(session, dt);
+
+        double expected = GameConfig.PHASE_ENERGY_REGEN_PER_SEC
+                * GameConfig.PHASE_ENERGY_EMPTY_WORLD_REGEN_MULTIPLIER * dt;
+        assertEquals(expected, session.getPlayer().getPhaseEnergy(), 1e-9,
+                "空世界里相位能量应翻倍回复");
+    }
+
+    @Test
+    void phaseEnergyRegenerationStaysNormalWhileTheWorldStillHasEnemies() {
+        GameSession session = new GameSession();
+        session.newRun("2024");
+        // 在即将切到的影界放一只还活着的敌人（放到房外，保证它打不到也打不死）。
+        Enemy lantern = session.getEnemies().spawnForTest(EnemyKind.LANTERN, WorldType.SHADOW, 1, Difficulty.NORMAL);
+        lantern.setPosition(9999, 9999);
+        assertTrue(session.tryShiftWorld());
+        assertEquals(0.0, session.getPlayer().getPhaseEnergy(), 1e-9);
+
+        double dt = 1.0;
+        update(session, dt);
+
+        assertEquals(GameConfig.PHASE_ENERGY_REGEN_PER_SEC * dt,
+                session.getPlayer().getPhaseEnergy(), 1e-9,
+                "还有敌人的世界里相位能量应保持原速回复");
+    }
+
+    @Test
+    void worldShiftTriggersTheAttackChargeBoost() {
+        GameSession session = new GameSession();
+        session.newRun("2024");
+
+        assertTrue(session.tryShiftWorld());
+        assertEquals(GameConfig.WORLD_SWITCH_CHARGE_BOOST_DURATION,
+                session.getPlayer().getAttackChargeBoostRemaining(), 1e-9,
+                "切界应立即触发攻击充能加速");
+    }
+
+    @Test
     void shopKeepsItsStockWhenThePlayerLeavesAndComesBack() {
         GameSession session = new GameSession();
         session.newRun("1");
@@ -289,6 +335,11 @@ class GameSessionTest {
 
     private static void update(GameSession session) {
         session.update(AppConfig.FIXED_DT, 0, 0, session.getPlayer().getX(), session.getPlayer().getY(), false);
+    }
+
+    /** 用指定步长推进一帧（用于精确核对按秒计的回复速率）。 */
+    private static void update(GameSession session, double dt) {
+        session.update(dt, 0, 0, session.getPlayer().getX(), session.getPlayer().getY(), false);
     }
 
     private static Room openRoom(int id, RoomType type, int mapX, int mapY) {
