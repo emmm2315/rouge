@@ -46,7 +46,9 @@ public final class GameController {
         this.loop = new GameLoop() {
             @Override
             protected void update(double dt) {
-                session.update(dt, input.horizontal(), input.vertical(), aimX, aimY, attackHeld);
+                // 替换选择面板是模态的：面板开着时不推进攻击，玩家的手不需要在“选槽位”和“松开鼠标”之间分心。
+                boolean attacking = attackHeld && session.getPendingEquipment() == null;
+                session.update(dt, input.horizontal(), input.vertical(), aimX, aimY, attacking);
                 GameController.this.onSessionUpdated.accept(session);
             }
             @Override
@@ -104,6 +106,25 @@ public final class GameController {
             else if (key == KeyCode.M) onMainMenu.run();
             return;
         }
+        // 装备栏满时，数字键只用于替换选择。
+        // ESC 是两级语义：面板开着时先关掉面板（装备留在原地），关掉之后再按才是暂停。
+        if (session.getPendingEquipment() != null) {
+            if (key == KeyCode.ESCAPE) {
+                session.resolveEquipmentSelection(-1);
+                return;
+            }
+            if (key == KeyCode.P) {
+                onPauseRequested.run();
+                return;
+            }
+            switch (key) {
+                case DIGIT1, NUMPAD1 -> session.resolveEquipmentSelection(0);
+                case DIGIT2, NUMPAD2 -> session.resolveEquipmentSelection(1);
+                case DIGIT3, NUMPAD3 -> session.resolveEquipmentSelection(2);
+                default -> { }
+            }
+            return;
+        }
         switch (key) {
             case W, UP -> input.setUp(true);
             case S, DOWN -> input.setDown(true);
@@ -120,6 +141,10 @@ public final class GameController {
                 if (!interactHeld) session.requestInteract();
                 interactHeld = true;
             }
+            // 非选择状态下，数字键丢弃对应装备槽位；掉落物保留在脚下，可再次拾取。
+            case DIGIT1, NUMPAD1 -> session.dropEquipment(0);
+            case DIGIT2, NUMPAD2 -> session.dropEquipment(1);
+            case DIGIT3, NUMPAD3 -> session.dropEquipment(2);
             case SPACE -> {
                 // 同 E：长按会连发 keyPressed，冲刺必须一次按下只算一次（冷却由玩家模型把关）。
                 if (!dashHeld) session.requestDash();

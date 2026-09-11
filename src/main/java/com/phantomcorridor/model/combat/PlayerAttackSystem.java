@@ -68,10 +68,11 @@ public final class PlayerAttackSystem {
             if (!player.consumeAttackCharge()) return false;
             double offset = GameConfig.PLAYER_RADIUS + GameConfig.LIGHT_PROJECTILE_RADIUS + 3.0;
             double cooldown = GameConfig.LIGHT_ATTACK_COOLDOWN;
-            if (player.hasEquipment(com.phantomcorridor.model.EquipmentType.FOCUS_LENS)) cooldown *= 1.15;
-            if (player.hasEquipment(com.phantomcorridor.model.EquipmentType.PHASE_GYROSCOPE)) cooldown *= 0.85;
+            cooldown *= 1.0 + player.equipmentCount(com.phantomcorridor.model.EquipmentType.FOCUS_LENS) * 0.15;
+            cooldown *= Math.pow(0.85, player.equipmentCount(com.phantomcorridor.model.EquipmentType.PHASE_GYROSCOPE));
             if (player.hasEquipment(com.phantomcorridor.model.EquipmentType.PRISM_FAN_WAND)) {
                 // 三叉杖：三发独立弹体，各自接受墙体和命中判定。
+                // 形态类武器是开关而不是数值，装两把不会变成六向散射，这里只看“有没有”。
                 addLightProjectile(player, unitX, unitY, offset, 0.0);
                 addLightProjectile(player, unitX, unitY, offset, Math.toRadians(-14.0));
                 addLightProjectile(player, unitX, unitY, offset, Math.toRadians(14.0));
@@ -89,9 +90,10 @@ public final class PlayerAttackSystem {
             meleeVisibleRemaining = GameConfig.SHADOW_MELEE_VISIBLE_TIME;
             meleeAttackId++;
             double cooldown = GameConfig.SHADOW_ATTACK_COOLDOWN;
-            if (player.hasEquipment(com.phantomcorridor.model.EquipmentType.FOCUS_LENS)) cooldown *= 1.15;
-            if (player.hasEquipment(com.phantomcorridor.model.EquipmentType.PHASE_GYROSCOPE)) cooldown *= 0.85;
-            if (player.hasEquipment(com.phantomcorridor.model.EquipmentType.NIGHTFALL_GREATSWORD)) cooldown *= 1.65;
+            cooldown *= 1.0 + player.equipmentCount(com.phantomcorridor.model.EquipmentType.FOCUS_LENS) * 0.15;
+            cooldown *= Math.pow(0.85, player.equipmentCount(com.phantomcorridor.model.EquipmentType.PHASE_GYROSCOPE));
+            // 重剑是数值型（换伤害形态的代价就是更慢），按件数叠加。
+            cooldown *= Math.pow(1.65, player.equipmentCount(com.phantomcorridor.model.EquipmentType.NIGHTFALL_GREATSWORD));
             cooldownRemaining = cooldown;
         }
         return true;

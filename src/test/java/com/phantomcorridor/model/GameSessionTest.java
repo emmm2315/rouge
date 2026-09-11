@@ -6,6 +6,7 @@ import com.phantomcorridor.model.combat.EnemyProjectile;
 import com.phantomcorridor.model.dungeon.DungeonMap;
 import com.phantomcorridor.model.entity.Enemy;
 import com.phantomcorridor.model.entity.EnemyKind;
+import com.phantomcorridor.model.entity.Player;
 import com.phantomcorridor.model.room.Direction;
 import com.phantomcorridor.model.room.Room;
 import com.phantomcorridor.model.room.RoomArea;
@@ -234,6 +235,25 @@ class GameSessionTest {
         assertTrue(session.getCoins() >= 7, "金币跨层保留");
         assertTrue(session.getNavigation().getCurrentRoom().type() == RoomType.ENTRANCE,
                 "新一层从入口房开始");
+    }
+
+    @Test
+    void newRunClearsEquipmentAndDoesNotInheritItsMaxHpOrShield() {
+        GameSession session = new GameSession();
+        session.newRun("2024");
+        Player player = session.getPlayer();
+        player.equip(com.phantomcorridor.model.EquipmentType.WAYFARER_HEART);
+        player.equip(com.phantomcorridor.model.EquipmentType.PHASE_VESSEL);
+        player.equip(com.phantomcorridor.model.EquipmentType.WAYFARER_HEART);
+        assertTrue(player.maxHp() > GameConfig.PLAYER_MAX_HP, "两件心核应当把生命上限抬上去");
+        assertTrue(player.getMaxShield() > GameConfig.PLAYER_SHIELD_CAPACITY, "相位容器应当撑大护盾容量");
+
+        session.newRun("2024");
+
+        assertTrue(session.getPlayer().getEquipment().isEmpty(), "新一局必须清空上一局的装备");
+        assertEquals(GameConfig.PLAYER_MAX_HP, session.getPlayer().maxHp(), "新一局不继承心核的生命上限");
+        assertEquals(GameConfig.PLAYER_SHIELD_CAPACITY, session.getPlayer().getMaxShield(), 1e-9,
+                "新一局不继承相位容器的护盾容量");
     }
 
     @Test

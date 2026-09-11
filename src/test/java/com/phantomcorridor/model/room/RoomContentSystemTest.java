@@ -248,6 +248,316 @@ class RoomContentSystemTest {
         assertEquals("E  购买 " + offer.displayName() + " " + price + " 金币", content.prompt(shop, player));
     }
 
+    @Test
+    void fullEquipmentBarWaitsForAChosenReplacementAndDropsTheOldItem() {
+        Room room = openRoom(9, RoomType.REWARD);
+        Player player = new Player(640, 480);
+        player.equip(EquipmentType.DAWN_WAND);
+        player.equip(EquipmentType.SHADOW_FANG);
+        player.equip(EquipmentType.DAWN_SEAL);
+        Pickup incoming = new Pickup(Pickup.Type.EQUIPMENT, 640, 480, EquipmentType.CRESCENT_REAPER.ordinal());
+        room.loot().addPickup(incoming);
+        RoomContentSystem content = new RoomContentSystem();
+        content.reset(1L, 1);
+
+        assertEquals(RoomContentSystem.Outcome.EQUIPMENT_SELECTION, content.interact(room, player));
+        assertSame(incoming, content.pendingEquipment());
+        assertTrue(room.loot().pickups().contains(incoming), "未确认替换前，地面装备不能消失");
+
+        assertTrue(content.resolveEquipmentSelection(room, player, 1));
+        assertEquals(EquipmentType.CRESCENT_REAPER, player.getEquipment().get(1));
+        assertTrue(room.loot().pickups().stream().anyMatch(pickup ->
+                pickup.type() == Pickup.Type.EQUIPMENT && pickup.amount() == EquipmentType.SHADOW_FANG.ordinal()));
+    }
+
+    @Test
+    void cancellingAReplacementKeepsTheGroundEquipmentAndStopsRePrompting() {
+        Room room = openRoom(9, RoomType.REWARD);
+        Player player = new Player(640, 480);
+        fillEquipmentBar(player);
+        Pickup incoming = new Pickup(Pickup.Type.EQUIPMENT, 640, 480, EquipmentType.CRESCENT_REAPER.ordinal());
+        room.loot().addPickup(incoming);
+        RoomContentSystem content = new RoomContentSystem();
+        content.reset(1L, 1);
+
+        assertEquals(RoomContentSystem.Outcome.EQUIPMENT_SELECTION, content.interact(room, player));
+        assertTrue(content.resolveEquipmentSelection(room, player, -1), "ESC 必须能取消");
+        assertNull(content.pendingEquipment());
+        assertEquals(3, player.getEquipment().size());
+        assertTrue(room.loot().pickups().contains(incoming), "取消拾取不能把地面装备吃掉");
+
+        // 关掉面板之后不再重复追问：否则玩家一按 ESC 就被重新弹面板，永远回不到暂停。
+        assertTrue(content.isDismissed(incoming, player));
+        assertEquals(RoomContentSystem.Outcome.NONE, content.interact(room, player, false),
+                "非主动交互（每帧自动路径）不能把刚关掉的面板重新弹出来");
+        assertNull(content.pendingEquipment());
+        // 但提示仍然要写明“再按 E 就能重新考虑”，否则玩家会以为这件装备再也拿不了。
+        assertTrue(content.prompt(room, player).startsWith("E  换装"), content.prompt(room, player));
+
+        // 走开一段时间再回来：玩家不按键就不会自动弹面板。
+        player.setPosition(incoming.x() + GameConfig.INTERACT_RADIUS + 60, incoming.y());
+        assertEquals("", content.prompt(room, player), "走远之后也够不着，没有提示");
+        player.setPosition(incoming.x(), incoming.y());
+        assertEquals(RoomContentSystem.Outcome.NONE, content.interact(room, player, false));
+        assertTrue(content.prompt(room, player).startsWith("E  换装"),
+                "回到装备旁边只是重新显示提示，不自动弹面板：" + content.prompt(room, player));
+    }
+
+    @Test
+    void dismissedEquipmentIsPickedUpAgainWithOneMorePress() {
+        Room room = openRoom(9, RoomType.REWARD);
+        Player player = new Player(640, 480);
+        fillEquipmentBar(player);
+        Pickup incoming = new Pickup(Pickup.Type.EQUIPMENT, 640, 480, EquipmentType.CRESCENT_REAPER.ordinal());
+        room.loot().addPickup(incoming);
+        RoomContentSystem content = new RoomContentSystem();
+        content.reset(1L, 1);
+
+        assertEquals(RoomContentSystem.Outcome.EQUIPMENT_SELECTION, content.interact(room, player));
+        assertTrue(content.resolveEquipmentSelection(room, player, -1));
+        assertTrue(content.isDismissed(incoming, player));
+
+        // 玩家主动再按一次 E：解除“已放弃”，重新进入替换选择。
+        assertEquals(RoomContentSystem.Outcome.EQUIPMENT_SELECTION, content.interact(room, player),
+                "再按一次 E 应当允许重新考虑");
+        assertFalse(content.isDismissed(incoming, player));
+        assertSame(incoming, content.pendingEquipment());
+        assertEquals(3, player.getEquipment().size(), "重新进入选择时装备栏也不该变化");
+
+        // 这一次真的换掉：换下来的那一件落在原位置，新装备进槽位。
+        assertTrue(content.resolveEquipmentSelection(room, player, 1));
+        assertEquals(EquipmentType.CRESCENT_REAPER, player.getEquipment().get(1));
+        assertTrue(room.loot().pickups().stream().anyMatch(pickup ->
+                        pickup.type() == Pickup.Type.EQUIPMENT && pickup.amount() == EquipmentType.SHADOW_FANG.ordinal()),
+                "换下来的影牙短刃留在地上");
+    }
+
+    @Test
+    void shopCannotOpenTheReplacementPanelWhenCoinsAreNotEnough() {
+        Room shop = openRoom(3, RoomType.SHOP);
+        Player player = new Player(640, 480);
+        fillEquipmentBar(player);
+        RoomContentSystem content = new RoomContentSystem();
+        content.reset(42L, 1);
+        content.enterRoom(shop, player);
+        Pickup offer = nearestOffer(shop, player);
+        int price = RoomContentSystem.priceOf(offer);
+        player.addCoins(price - 1);
+
+        content.interact(shop, player);   // 选中
+        RoomContentSystem.Outcome outcome = content.interact(shop, player);   // 确认购买
+
+        assertEquals(RoomContentSystem.Outcome.HANDLED, outcome,
+                "买不起时不能弹替换面板，否则玩家选完槽位才被告知没钱");
+        assertNull(content.pendingEquipment());
+        assertTrue(content.prompt(shop, player).startsWith("金币不足"), content.prompt(shop, player));
+        assertTrue(shop.loot().pickups().contains(offer), "买不起的商品留在货架上");
+        assertEquals(price - 1, player.getCoins());
+    }
+
+    @Test
+    void buyingIntoAFullBarChargesExactlyOnceAndDropsTheReplacedItemInTheShop() {
+        Room shop = openRoom(3, RoomType.SHOP);
+        Player player = new Player(640, 480);
+        fillEquipmentBar(player);
+        RoomContentSystem content = new RoomContentSystem();
+        content.reset(42L, 1);
+        content.enterRoom(shop, player);
+        Pickup offer = nearestOffer(shop, player);
+        int price = RoomContentSystem.priceOf(offer);
+        player.addCoins(price + 5);
+
+        content.interact(shop, player);   // 选中
+        assertEquals("E  确认购买 " + price + " 金币（装备栏已满，需选择替换）", content.prompt(shop, player),
+                "选中阶段就要说明满栏，玩家才知道按下去会弹替换面板");
+
+        assertEquals(RoomContentSystem.Outcome.EQUIPMENT_SELECTION, content.interact(shop, player));
+        assertTrue(content.isPendingPurchase());
+        assertEquals(price, content.pendingPrice());
+        assertEquals("装备栏已满：按 1-3 替换，ESC 取消", content.prompt(shop, player));
+        assertEquals(price + 5, player.getCoins(), "弹面板时还没成交，不能先扣钱");
+
+        EquipmentType replaced = player.getEquipment().get(0);
+        assertTrue(content.resolveEquipmentSelection(shop, player, 0));
+
+        assertEquals(5, player.getCoins(), "只扣一次款");
+        assertEquals(EquipmentType.values()[offer.amount()], player.getEquipment().get(0), "买到的新装备进槽位");
+        assertFalse(shop.loot().pickups().contains(offer), "已购买的商品下架");
+        Pickup dropped = shop.loot().pickups().stream()
+                .filter(pickup -> pickup.type() == Pickup.Type.EQUIPMENT
+                        && pickup.amount() == replaced.ordinal())
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("被替换下来的装备应当落在商店地面上"));
+
+        // 掉在商店里的装备不是商品：没有价签，捡回来也不该再花钱。
+        assertEquals(-1, RoomContentSystem.priceOf(dropped), "玩家丢下的装备不能变成商品");
+        assertFalse(dropped.shopGoods());
+        assertEquals("E  换装 " + replaced.displayName() + "（装备栏已满，需选择替换）",
+                content.prompt(shop, player),
+                "被替换下来的装备离玩家最近，提示应当是“换装”而不是带价签的购买");
+
+        // 腾出一格再走回去捡：按 E 直接上身，金币一分不动。
+        player.removeEquipment(1);
+        player.setPosition(dropped.x(), dropped.y());
+        assertEquals(RoomContentSystem.Outcome.HANDLED, content.interact(shop, player));
+        assertEquals(5, player.getCoins(), "捡回自己换下的装备不能扣钱");
+        assertEquals(1, player.equipmentCount(replaced), "捡回来的还是原来那一件");
+        assertFalse(shop.loot().pickups().contains(dropped));
+    }
+
+    @Test
+    void droppingEquipmentLandsWithinReachSoItCanBePickedBackUp() {
+        Room room = openRoom(9, RoomType.REWARD);
+        Player player = new Player(640, 480);
+        player.equip(EquipmentType.WAYFARER_HEART);
+        RoomContentSystem content = new RoomContentSystem();
+        content.reset(1L, 1);
+        int maxHpWithHeart = player.maxHp();
+
+        assertTrue(content.dropEquipment(room, player, 0));
+        assertTrue(player.getEquipment().isEmpty(), "丢弃后装备栏必须空出来");
+        assertTrue(player.maxHp() < maxHpWithHeart, "摘掉心核后生命上限要跟着降下来");
+
+        Pickup ground = room.loot().pickups().getFirst();
+        double distance = Math.hypot(ground.x() - player.getX(), ground.y() - player.getY());
+        assertTrue(distance <= GameConfig.INTERACT_RADIUS,
+                "丢在脚下的装备必须仍在交互半径内（实际 " + distance + "）");
+        assertEquals(EquipmentType.WAYFARER_HEART.ordinal(), ground.amount(), "落地的必须是刚丢掉的那一件");
+
+        // 走开再回来照样能捡：掉落物挂在房间上，不随玩家离开而消失。
+        player.setPosition(player.getX() + 300, player.getY());
+        content.update(room, player);
+        player.setPosition(ground.x(), ground.y());
+        assertEquals(RoomContentSystem.Outcome.HANDLED, content.interact(room, player));
+        assertEquals(1, player.equipmentCount(EquipmentType.WAYFARER_HEART), "捡回来的还是同一件装备");
+        assertEquals(maxHpWithHeart, player.maxHp());
+        assertTrue(room.loot().pickups().isEmpty());
+    }
+
+    @Test
+    void combatBlocksEquipmentPickupDropAndReplacement() {
+        Room room = openRoom(9, RoomType.REWARD);
+        Player player = new Player(640, 480);
+        fillEquipmentBar(player);
+        Pickup incoming = new Pickup(Pickup.Type.EQUIPMENT, 640, 480, EquipmentType.CRESCENT_REAPER.ordinal());
+        room.loot().addPickup(incoming);
+        RoomContentSystem content = new RoomContentSystem();
+        content.reset(1L, 1);
+
+        // 战斗中按 E：装备留在原地，不弹换装面板。
+        assertEquals(RoomContentSystem.Outcome.NONE, content.interact(room, player, true, true));
+        assertNull(content.pendingEquipment());
+        assertEquals(3, player.getEquipment().size());
+        assertTrue(room.loot().pickups().contains(incoming), "战斗中拾取失败不能把地面装备吃掉");
+        assertEquals("战斗中无法换装", content.prompt(room, player, true));
+
+        // 战斗中数字键：不丢东西。
+        assertFalse(content.dropEquipment(room, player, 0, true));
+        assertEquals(3, player.getEquipment().size(), "战斗中丢弃必须被拒绝");
+        assertTrue(room.loot().pickups().size() == 1, "地面上不该多出掉落物");
+
+        // 脱战之后一切照旧：先拾取（进入替换选择），再真正替换。
+        assertEquals(RoomContentSystem.Outcome.EQUIPMENT_SELECTION, content.interact(room, player, true, false));
+        assertTrue(content.resolveEquipmentSelection(room, player, 0));
+        assertEquals(EquipmentType.CRESCENT_REAPER, player.getEquipment().get(0));
+        assertTrue(content.dropEquipment(room, player, 0, false), "脱战之后可以正常丢弃");
+    }
+
+    @Test
+    void combatDoesNotBlockPickingUpANonEquipmentReward() {
+        Room room = openRoom(9, RoomType.REWARD);
+        Player player = new Player(640, 480);
+        fillEquipmentBar(player);
+        Pickup coins = new Pickup(Pickup.Type.COIN, 640, 480, 7);
+        room.loot().addPickup(coins);
+        RoomContentSystem content = new RoomContentSystem();
+        content.reset(1L, 1);
+
+        // 金币、药剂这些不涉及装备栏的东西不受战斗限制，否则清怪路上捡不了钱。
+        assertEquals("E  拾取 金币", content.prompt(room, player, true), "非装备拾取的提示不受战斗影响");
+        assertEquals(RoomContentSystem.Outcome.HANDLED, content.interact(room, player, true, true));
+        assertEquals(7, player.getCoins());
+        assertFalse(room.loot().pickups().contains(coins));
+    }
+
+    @Test
+    void combatKeepsTheShopSelectionInsteadOfOpeningTheReplacementPanel() {
+        Room shop = openRoom(3, RoomType.SHOP);
+        Player player = new Player(640, 480);
+        fillEquipmentBar(player);
+        RoomContentSystem content = new RoomContentSystem();
+        content.reset(42L, 1);
+        content.enterRoom(shop, player);
+        Pickup offer = nearestOffer(shop, player);
+        int price = RoomContentSystem.priceOf(offer);
+        player.addCoins(price + 5);
+
+        content.interact(shop, player, true, true);    // 选中（金币够，选中不受战斗限制）
+        assertEquals(RoomContentSystem.Outcome.HANDLED, content.interact(shop, player, true, true));
+        assertNull(content.pendingEquipment(), "战斗中不弹换装面板");
+        assertEquals(price + 5, player.getCoins(), "没成交就不能扣钱");
+        assertTrue(shop.loot().pickups().contains(offer), "商品还在货架上");
+        assertEquals("战斗中无法换装", content.prompt(shop, player, true));
+
+        // 清完怪再按一次 E：照常进入替换选择并成交。
+        assertEquals(RoomContentSystem.Outcome.EQUIPMENT_SELECTION, content.interact(shop, player, true, false));
+        assertTrue(content.resolveEquipmentSelection(shop, player, 0));
+        assertEquals(5, player.getCoins());
+    }
+
+    @Test
+    void twoDropsFromTheSameSpotDoNotStackIntoOneUnreachablePile() {
+        Room room = openRoom(9, RoomType.REWARD);
+        Player player = new Player(640, 480);
+        fillEquipmentBar(player);
+        RoomContentSystem content = new RoomContentSystem();
+        content.reset(1L, 1);
+
+        assertTrue(content.dropEquipment(room, player, 0));
+        assertTrue(content.dropEquipment(room, player, 0));
+        assertEquals(2, room.loot().pickups().size());
+        Pickup first = room.loot().pickups().get(0);
+        Pickup second = room.loot().pickups().get(1);
+        assertTrue(Math.hypot(first.x() - second.x(), first.y() - second.y()) > 1.0,
+                "两件掉落物不能完全重叠，否则没法只捡回其中一件");
+        for (Pickup pickup : room.loot().pickups()) {
+            double distance = Math.hypot(pickup.x() - player.getX(), pickup.y() - player.getY());
+            assertTrue(distance <= GameConfig.INTERACT_RADIUS, "第二件也必须够得着（实际 " + distance + "）");
+        }
+    }
+
+    @Test
+    void replacementSelectionGuardsAgainstBadInputAndReentry() {
+        Room room = openRoom(9, RoomType.REWARD);
+        Player player = new Player(640, 480);
+        fillEquipmentBar(player);
+        Pickup incoming = new Pickup(Pickup.Type.EQUIPMENT, 640, 480, EquipmentType.CRESCENT_REAPER.ordinal());
+        room.loot().addPickup(incoming);
+        RoomContentSystem content = new RoomContentSystem();
+        content.reset(1L, 1);
+
+        assertFalse(content.resolveEquipmentSelection(room, player, 0), "没有待处理的选择时不该改任何状态");
+        assertFalse(content.dropEquipment(room, player, 7), "越界槽位丢弃应当失败");
+        assertEquals(3, player.getEquipment().size());
+
+        content.interact(room, player);
+        assertEquals(RoomContentSystem.Outcome.EQUIPMENT_SELECTION, content.interact(room, player),
+                "面板打开时再按 E 不应当重复入队");
+        assertFalse(content.resolveEquipmentSelection(room, player, 3), "越界槽位不能替换");
+        assertSame(incoming, content.pendingEquipment(), "非法输入后面板保持打开");
+
+        assertTrue(content.resolveEquipmentSelection(room, player, 2));
+        assertNull(content.pendingEquipment());
+        assertFalse(content.resolveEquipmentSelection(room, player, 0), "结算一次后选择状态必须清干净");
+    }
+
+    /** 装满三格：所有“满栏”路径的前置条件。 */
+    private static void fillEquipmentBar(Player player) {
+        player.equip(EquipmentType.DAWN_WAND);
+        player.equip(EquipmentType.SHADOW_FANG);
+        player.equip(EquipmentType.DAWN_SEAL);
+    }
+
     /** 把玩家放到离某件商品最近的位置，避免测试依赖商店的摆放顺序。 */
     private static Pickup nearestOffer(Room shop, Player player) {
         Pickup nearest = shop.loot().pickups().getFirst();

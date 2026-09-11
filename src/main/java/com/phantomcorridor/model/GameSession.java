@@ -277,7 +277,17 @@ public final class GameSession {
     public boolean isChestVisible() { return navigation.getCurrentRoom().hasUnopenedChest(); }
 
     public String getInteractionPrompt() {
-        return roomContent.prompt(navigation.getCurrentRoom(), player);
+        return roomContent.prompt(navigation.getCurrentRoom(), player, isInCombat());
+    }
+
+    /**
+     * 当前是否处于战斗中。
+     *
+     * <p>敌人只存在于它们被生成的那个房间（{@code EnemySystem} 换房时会清表），
+     * 所以“场上还有活着的敌人”就是“玩家正在挨打”。换装与丢弃都以这个判定为闸门。
+     */
+    public boolean isInCombat() {
+        return !enemies.isRoomCleared();
     }
 
     /** 当前交互目标（地面拾取物）；渲染层用它给最近的那件物品画名称标签。 */
@@ -297,8 +307,54 @@ public final class GameSession {
     /** 金币是否够买这件商品。 */
     public boolean canAfford(Pickup pickup) { return RoomContentSystem.canAfford(player, pickup); }
 
+    /**
+     * 满栏装备选择：{@code slot < 0} 表示取消（ESC），1-3 对应装备槽位。
+     *
+     * <p>战斗中一律拒绝：面板可能是进战斗前就打开的，不能让玩家在弹幕里把它结算掉。
+     */
+    public boolean resolveEquipmentSelection(int slot) {
+        if (isInCombat()) return false;
+        return roomContent.resolveEquipmentSelection(navigation.getCurrentRoom(), player, slot);
+    }
+
+    /**
+     * 当前交互目标是否是一件刚被 ESC 放弃的装备。
+     *
+     * <p>渲染层据此不再画“E 换装”提示：面板已经关掉了，再提示可换装会让玩家反复按 E。
+     */
+    public boolean isInteractionTargetDismissed() {
+        Room current = navigation.getCurrentRoom();
+        return roomContent.isDismissed(roomContent.currentTarget(current, player), player);
+    }
+
+    /** 当前等待替换选择的地面装备；为空代表装备栏未处于选择状态。 */
+    public Pickup getPendingEquipment() { return roomContent.pendingEquipment(); }
+
+    /** 这次替换是否来自商店购买（渲染层据此显示要扣的金币）。 */
+    public boolean isPendingEquipmentPurchase() { return roomContent.isPendingPurchase(); }
+
+    /** 本次满栏替换需要支付的金币；不是购买时为 0。 */
+    public int getPendingEquipmentPrice() { return roomContent.pendingPrice(); }
+
+    /** 丢弃指定装备槽位，物品会留在当前房间玩家脚下；战斗中不可丢弃。 */
+    public boolean dropEquipment(int slot) {
+        if (isInCombat()) {
+            // 战斗中丢了东西，10 号键看起来"按了没反应"最容易被当成 bug，所以给一条即时提示。
+            announce("战斗中无法丢弃装备", 1.4);
+            return false;
+        }
+        return roomContent.dropEquipment(navigation.getCurrentRoom(), player, slot, false);
+    }
+
+    /** 弹一条房间级短提示（复用房间播报通道，不另外引入 UI 状态）。 */
+    private void announce(String text, double seconds) {
+        roomAnnouncement = text;
+        roomAnnouncementRemaining = seconds;
+        floorAnnouncement = false;
+    }
+
     private void interact(Room current) {
-        RoomContentSystem.Outcome outcome = roomContent.interact(current, player);
+        RoomContentSystem.Outcome outcome = roomContent.interact(current, player, true, isInCombat());
         if (outcome == RoomContentSystem.Outcome.EVENT_AMBUSH) {
             // 事件房抽到伏击：房间里重新刷怪并重新关门，清空后宝箱照常出现。
             current.setCleared(false);
