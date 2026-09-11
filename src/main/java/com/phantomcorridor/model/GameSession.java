@@ -34,6 +34,7 @@ public final class GameSession {
     private double aimY;
     private String roomAnnouncement = "";
     private double roomAnnouncementRemaining;
+    private boolean floorAnnouncement;
     // 未被引用（IDE 的 Unused 检查会报）：只被赋值、从未被读取，也没有对外暴露 getter。
     // 需要“是否在战斗中”时直接问 enemies.isRoomCleared() 即可，先注释保留。
     // private boolean combatActive;
@@ -88,6 +89,7 @@ public final class GameSession {
         // combatActive = false;   // 见字段处的说明：这个状态没有任何读取点
         roomAnnouncement = floorAnnouncement();
         roomAnnouncementRemaining = 2.6;
+        floorAnnouncement = true;
     }
 
     /** 使用首领房里的传送门：进入下一层；已经是最后一层则通关。 */
@@ -135,6 +137,7 @@ public final class GameSession {
             enemies.enterRoom(entered, dungeonSeed, player, navigation);
             roomAnnouncement = roomAnnouncement(entered);
             roomAnnouncementRemaining = 2.2;
+            floorAnnouncement = false;
         }
         // 房间内容只在第一次进入时生成，进出不会重刷；这里只维护“待确认商品”的有效性。
         roomContent.update(navigation.getCurrentRoom(), player);
@@ -202,6 +205,7 @@ public final class GameSession {
     public boolean isRoomAnnouncementVisible() { return roomAnnouncementRemaining > 0.0; }
     public String getRoomAnnouncement() { return roomAnnouncement; }
     public double getRoomAnnouncementRemaining() { return roomAnnouncementRemaining; }
+    public boolean isFloorAnnouncement() { return floorAnnouncement; }
     public void requestInteract() { interactRequested = true; }
 
     /**
@@ -295,7 +299,9 @@ public final class GameSession {
         return room.type() == RoomType.ENTRANCE ? floorAnnouncement() : roomTypeLabel(room.type());
     }
 
-    private String floorAnnouncement() { return "第 " + floor + " 层 · 入口房"; }
+    private String floorAnnouncement() {
+        return "第 " + floor + " 层 · " + difficulty.displayName() + " · 入口房";
+    }
 
     private static String roomTypeLabel(RoomType type) {
         return switch (type) {

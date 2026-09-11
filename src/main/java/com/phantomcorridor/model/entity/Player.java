@@ -53,6 +53,9 @@ public final class Player {
     }
 
     public void reset(double x, double y) {
+        // 先清理上一局的装备，再计算初始生命上限，避免行者心核把新局初始血量错误地保留为 120。
+        this.items.clear();
+        this.equipment.clear();
         this.hp = maxHp();
         this.x = x;
         this.y = y;
@@ -77,8 +80,6 @@ public final class Player {
         this.hitKnockbackX = 0.0;
         this.hitKnockbackY = 0.0;
         this.shield = new Shield(shieldCapacity());
-        this.items.clear();
-        this.equipment.clear();
     }
 
     public void move(double directionX, double directionY, double dt,
@@ -356,8 +357,11 @@ public final class Player {
 
     public int getHp() { return hp; }
 
-    /** 当前最大生命值（后续道具/装备加成从这里扩展）。 */
-    public int maxHp() { return GameConfig.PLAYER_MAX_HP; }
+    /** 当前最大生命值；行者心核按设计提升 20%，装备时不自动补血。 */
+    public int maxHp() {
+        boolean hasHeart = equipment.contains(EquipmentType.WAYFARER_HEART);
+        return hasHeart ? (int) Math.ceil(GameConfig.PLAYER_MAX_HP * 1.20) : GameConfig.PLAYER_MAX_HP;
+    }
 
     public void restoreHealth(int amount) { hp = Math.min(maxHp(), hp + Math.max(0, amount)); }
 
@@ -391,8 +395,20 @@ public final class Player {
                 : item == EquipmentType.SHADOW_FANG && currentWorld == WorldType.SHADOW ? 1
                 : item == EquipmentType.RIFT_TWINBLADE || item == EquipmentType.DAWN_SEAL && currentWorld == WorldType.LIGHT ? 1
                 : 0).sum();
+        // 新增武器的首轮数值采用整数模型的最小可见增幅；精确多段伤害由攻击方案继续细分。
+        bonus += equipment.stream().mapToInt(item -> switch (item) {
+            case PRISM_FAN_WAND, SUNLANCE, MIRROR_ORB, SOLAR_BURST_STAFF ->
+                    currentWorld == WorldType.LIGHT ? 1 : 0;
+            case CRESCENT_REAPER, RETURNING_FANG, NIGHTFALL_GREATSWORD ->
+                    currentWorld == WorldType.SHADOW ? 1 : 0;
+            case ECLIPSE_RELAY -> 1;
+            case FOCUS_LENS -> currentWorld == WorldType.LIGHT ? 1 : 0;
+            case HUNTERS_FANG -> currentWorld == WorldType.SHADOW ? 1 : 0;
+            default -> 0;
+        }).sum();
         return 1 + bonus;
     }
+    public boolean hasEquipment(EquipmentType item) { return item != null && equipment.contains(item); }
     public WorldType getCurrentWorld() { return currentWorld; }
     public PlayerAnimationState getAnimationState() { return animationState; }
     public double getAnimationTime() { return animationTime; }

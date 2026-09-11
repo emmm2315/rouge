@@ -83,6 +83,7 @@ public final class GameRenderer {
     private static final Image EQUIPMENT_ICONS = loadUiImage("equipment_v1.png");
     /** 受击闪白用的"纯白剪影"缓存：按需生成，同一张贴图只算一次。 */
     private static final Map<Image, Image> WHITE_SILHOUETTES = new HashMap<>();
+    private static final Map<String, Image> EQUIPMENT_ASSETS = loadEquipmentAssets();
     private static final Map<String, Image> MONSTER_IMAGES = new HashMap<>();
     private static final Map<String, Image[]> MONSTER_FRAME_SETS = new HashMap<>();
 
@@ -727,16 +728,16 @@ public final class GameRenderer {
         g.setStroke(Color.rgb(255, 255, 255, 0.28));
         g.strokeRoundRect(x, y, width, height, 7, 7);
 
-        // 护盾条：画在血条下沿内侧，长度按“换算到生命刻度”的比例，且不超出已填充的血条范围。
+        // 护盾条追加在血条右侧，使用灰白色，避免与生命填充混在一起。
         if (player.getMaxShield() > 0.0) {
-            double shieldLength = Math.min(width * player.getShieldBarRatio(), filled);
+            double shieldLength = Math.min(width * player.getShieldBarRatio(), width);
             if (shieldLength > 0.5) {
-                double barY = y + height - GameConfig.HUD_SHIELD_BAR_HEIGHT - 1.0;
-                g.setFill(Color.color(SHIELD_BLUE.getRed(), SHIELD_BLUE.getGreen(), SHIELD_BLUE.getBlue(), 0.92));
-                g.fillRoundRect(x + 1, barY, shieldLength, GameConfig.HUD_SHIELD_BAR_HEIGHT, 3, 3);
-                g.setStroke(Color.web("#e8f8ff"));
+                double shieldX = x + width + 6.0;
+                g.setFill(Color.rgb(218, 224, 232, 0.92));
+                g.fillRoundRect(shieldX, y, shieldLength, height, 7, 7);
+                g.setStroke(Color.web("#ffffff"));
                 g.setLineWidth(1.0);
-                g.strokeRoundRect(x + 1, barY, shieldLength, GameConfig.HUD_SHIELD_BAR_HEIGHT, 3, 3);
+                g.strokeRoundRect(shieldX, y, shieldLength, height, 7, 7);
             }
         }
 
@@ -1251,7 +1252,8 @@ public final class GameRenderer {
         g.setTextAlign(TextAlignment.CENTER);
         g.setFont(Font.font("Consolas", FontWeight.BOLD, 24));
         g.setFill(Color.rgb(255, 239, 178, alpha));
-        g.fillText("◆  " + session.getRoomAnnouncement() + "  ◆", AppConfig.VIEW_WIDTH / 2.0, 84);
+        double announcementY = session.isFloorAnnouncement() ? AppConfig.VIEW_HEIGHT / 2.0 : 84.0;
+        g.fillText("◆  " + session.getRoomAnnouncement() + "  ◆", AppConfig.VIEW_WIDTH / 2.0, announcementY);
         g.setTextAlign(TextAlignment.LEFT);
     }
 
@@ -1281,6 +1283,16 @@ public final class GameRenderer {
         return resource == null ? null : new Image(resource.toExternalForm(), false);
     }
 
+    private static Map<String, Image> loadEquipmentAssets() {
+        Map<String, Image> result = new HashMap<>();
+        for (var item : com.phantomcorridor.model.EquipmentType.values()) {
+            if (item.assetId() == null) continue;
+            Image image = loadUiImage("equipment/" + item.assetId() + ".png");
+            if (image != null) result.put(item.assetId(), image);
+        }
+        return result;
+    }
+
     private void drawHud(GraphicsContext g, GameSession session, double fps, boolean light) {
         Color domain = light ? LIGHT_GOLD : SHADOW_VIOLET;
         Player player = session.getPlayer();
@@ -1295,12 +1307,6 @@ public final class GameRenderer {
         g.setFill(Color.web("#efe7d8"));
         g.fillText("生命", 78, 91);
         drawHealthBar(g, player);
-        // 层数与难度放在第一行右侧：并进下面那行状态文字会顶出面板。
-        g.setFill(domain);
-        g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 15));
-        g.fillText("第 " + session.getFloor() + " / " + session.getTotalFloors() + " 层　·　"
-                + session.getDifficulty().displayName() + "（敌人 " + session.getDifficulty().percentText() + "）",
-                286, 91);
         g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 17));
 
         g.setFill(Color.rgb(111, 177, 255, 0.9));

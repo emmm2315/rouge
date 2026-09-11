@@ -1,6 +1,8 @@
 package com.phantomcorridor.config;
 
 import com.phantomcorridor.model.Difficulty;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * 全局游戏设置（随功能开发逐步生效与完善）。
@@ -45,6 +47,12 @@ public class Settings {
 
     /** 本局难度（主菜单点击"开始游戏"时选择，默认标准） */
     private Difficulty difficulty = Difficulty.NORMAL;
+    private final List<Runnable> musicVolumeListeners = new ArrayList<>();
+
+    /** 注册音乐音量变化监听，供正在播放的音频管理器即时同步。 */
+    public void addMusicVolumeListener(Runnable listener) {
+        if (listener != null) musicVolumeListeners.add(listener);
+    }
 
 
     /** @return 鼠标灵敏度倍率（0.5~2.0） */
@@ -75,6 +83,7 @@ public class Settings {
     /** @param musicVolume 音乐音量，自动钳制到 0.0~1.0 */
     public void setMusicVolume(double musicVolume) {
         this.musicVolume = clamp(musicVolume, 0.0, 1.0);
+        musicVolumeListeners.forEach(Runnable::run);
     }
 
     /** @return 开发模式随机种子（空串表示随机生成） */
@@ -101,7 +110,7 @@ public class Settings {
     public void reset() {
         mouseSensitivity = DEFAULT_MOUSE_SENSITIVITY;
         sfxVolume = DEFAULT_SFX_VOLUME;
-        musicVolume = DEFAULT_MUSIC_VOLUME;
+        setMusicVolume(DEFAULT_MUSIC_VOLUME);
         devSeed = "";
         difficulty = Difficulty.NORMAL;
     }

@@ -67,20 +67,46 @@ public final class PlayerAttackSystem {
         if (player.getCurrentWorld() == WorldType.LIGHT) {
             if (!player.consumeAttackCharge()) return false;
             double offset = GameConfig.PLAYER_RADIUS + GameConfig.LIGHT_PROJECTILE_RADIUS + 3.0;
-            projectiles.add(new Projectile(
-                    player.getX() + unitX * offset, player.getY() + unitY * offset,
-                    unitX * GameConfig.LIGHT_PROJECTILE_SPEED,
-                    unitY * GameConfig.LIGHT_PROJECTILE_SPEED,
-                    GameConfig.LIGHT_PROJECTILE_RADIUS, WorldType.LIGHT,
-                    GameConfig.LIGHT_PROJECTILE_LIFETIME));
-            cooldownRemaining = GameConfig.LIGHT_ATTACK_COOLDOWN;
+            double cooldown = GameConfig.LIGHT_ATTACK_COOLDOWN;
+            if (player.hasEquipment(com.phantomcorridor.model.EquipmentType.FOCUS_LENS)) cooldown *= 1.15;
+            if (player.hasEquipment(com.phantomcorridor.model.EquipmentType.PHASE_GYROSCOPE)) cooldown *= 0.85;
+            if (player.hasEquipment(com.phantomcorridor.model.EquipmentType.PRISM_FAN_WAND)) {
+                // 三叉杖：三发独立弹体，各自接受墙体和命中判定。
+                addLightProjectile(player, unitX, unitY, offset, 0.0);
+                addLightProjectile(player, unitX, unitY, offset, Math.toRadians(-14.0));
+                addLightProjectile(player, unitX, unitY, offset, Math.toRadians(14.0));
+                cooldown *= 1.10;
+            } else if (player.hasEquipment(com.phantomcorridor.model.EquipmentType.ECLIPSE_RELAY)) {
+                addLightProjectile(player, unitX, unitY, offset, 0.0);
+                addLightProjectile(player, unitX, unitY, offset, 0.0);
+                cooldown *= 1.20;
+            } else {
+                addLightProjectile(player, unitX, unitY, offset, 0.0);
+            }
+            cooldownRemaining = cooldown;
         } else {
             if (!player.consumeAttackCharge()) return false;
             meleeVisibleRemaining = GameConfig.SHADOW_MELEE_VISIBLE_TIME;
             meleeAttackId++;
-            cooldownRemaining = GameConfig.SHADOW_ATTACK_COOLDOWN;
+            double cooldown = GameConfig.SHADOW_ATTACK_COOLDOWN;
+            if (player.hasEquipment(com.phantomcorridor.model.EquipmentType.FOCUS_LENS)) cooldown *= 1.15;
+            if (player.hasEquipment(com.phantomcorridor.model.EquipmentType.PHASE_GYROSCOPE)) cooldown *= 0.85;
+            if (player.hasEquipment(com.phantomcorridor.model.EquipmentType.NIGHTFALL_GREATSWORD)) cooldown *= 1.65;
+            cooldownRemaining = cooldown;
         }
         return true;
+    }
+
+    private void addLightProjectile(Player player, double unitX, double unitY, double offset, double angle) {
+        double cos = Math.cos(angle), sin = Math.sin(angle);
+        double rotatedX = unitX * cos - unitY * sin;
+        double rotatedY = unitX * sin + unitY * cos;
+        projectiles.add(new Projectile(
+                player.getX() + rotatedX * offset, player.getY() + rotatedY * offset,
+                rotatedX * GameConfig.LIGHT_PROJECTILE_SPEED,
+                rotatedY * GameConfig.LIGHT_PROJECTILE_SPEED,
+                GameConfig.LIGHT_PROJECTILE_RADIUS, WorldType.LIGHT,
+                GameConfig.LIGHT_PROJECTILE_LIFETIME));
     }
 
     public List<Projectile> getProjectiles() {
