@@ -38,6 +38,16 @@ public enum Difficulty {
     /** 敌人基础属性（生命、防御）的倍率。 */
     public double enemyStatMultiplier() { return enemyStatMultiplier; }
 
+    /**
+     * 玩家攻击伤害的倍率。
+     *
+     * <p>与 {@link #enemyStatMultiplier()} 完全一致：难度改的是“双方伤害与血量的整体刻度”，
+     * 而不是单方面把敌人堆厚。旧实现里玩家伤害恒为 1～4 点、而敌人生命会随难度涨到 200%，
+     * 于是「屌炸天」下同一只小怪要打两倍次数——那不是变难，只是变磨。
+     * 现在玩家的每一击也乘同一个倍率，敌人更厚、玩家打得更疼，节奏保持不变。
+     */
+    public double playerDamageMultiplier() { return enemyStatMultiplier; }
+
     /** 一句难度说明，菜单与文档共用。 */
     public String description() { return description; }
 

@@ -4,6 +4,8 @@ package com.phantomcorridor.model.entity;
 public enum PlayerAnimationState {
     IDLE,
     MOVING,
+    /** 闪避冲刺：冲刺期间无视方向输入，只播放冲刺动作并留下拖尾。 */
+    DASHING,
     ATTACKING,
     SHIFTING,
     DOWN

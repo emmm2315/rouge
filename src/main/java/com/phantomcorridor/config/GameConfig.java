@@ -25,6 +25,41 @@ public final class GameConfig {
     /** 影形态额外移动速度加成倍率（§3.2 影形态"移动略快"，占位） */
     public static final double SHADOW_SPEED_MULTIPLIER = 1.15;
 
+    // ---- 闪避冲刺（空格） ----
+    /**
+     * 冲刺距离（像素）。
+     *
+     * <p>固定距离而不是固定速度：形体的移动速度加成（影形态 1.15 倍）只影响走路，
+     * 冲刺距离在两种形态下保持一致，玩家才能凭手感判断"能不能从这一击里翻出去"。
+     */
+    public static final double DASH_DISTANCE = 150.0;
+
+    /** 冲刺持续时间（秒）：冲完这段位移即恢复控制。 */
+    public static final double DASH_DURATION = 0.18;
+
+    /** 冲刺速度（像素/秒）：由固定距离与持续时间推出，约 833 像素/秒。 */
+    public static final double DASH_SPEED = DASH_DISTANCE / DASH_DURATION;
+
+    /**
+     * 冲刺内置冷却（秒）：从冲刺结束开始计时，冷却中再次按空格不会触发。
+     *
+     * <p>冷却从"冲完"而不是"起手"开始算，这样 1 秒就是两次冲刺之间实际要等的间隔。
+     */
+    public static final double DASH_COOLDOWN = 1.0;
+
+    /**
+     * 冲刺残影（拖尾）单段存活时间（秒）。
+     *
+     * <p>略长于冲刺本身，冲刺结束后拖尾会自然消散，而不是跟着动作一起"啪"地消失。
+     */
+    public static final double DASH_TRAIL_LIFETIME = 0.28;
+
+    /** 冲刺残影的段数上限：寿命内按帧记录也不会超过这个数，避免异常长帧堆积贴图。 */
+    public static final int DASH_TRAIL_MAX = 32;
+
+    /** 冲刺残影的最初不透明度：越接近玩家本体越淡，避免拖尾盖住角色。 */
+    public static final double DASH_TRAIL_ALPHA = 0.34;
+
     // ---- 第 3 天：双形态攻击 ----
     public static final double LIGHT_PROJECTILE_SPEED = 560.0;
     public static final double LIGHT_PROJECTILE_RADIUS = 6.0;
@@ -203,11 +238,81 @@ public final class GameConfig {
     public static final double ENEMY_PROJECTILE_LIFETIME = ENEMY_RANGED_ATTACK_RANGE * 1.3 / ENEMY_PROJECTILE_SPEED;
 
     public static final double ENEMY_PROJECTILE_RADIUS = 12.0;
+
+    // ---- 玩家受击反应 ----
+    /**
+     * 受击后的无敌时间（秒）。
+     *
+     * <p>这段时间避免一帧内被重叠弹幕重复扣血；同时不许往回走太多，
+     * 否则"贴着打"会变成完全打不中。
+     */
     public static final double PLAYER_HIT_INVULNERABILITY = 0.65;
 
+    /** 受击击退距离（像素）：沿伤害来源的反方向被推开。 */
+    public static final double PLAYER_HIT_KNOCKBACK = 25.0;
+
+    /** 受击贴图变淡的持续时间（秒）：比无敌时间短，是"挨了一下"的即时反馈。 */
+    public static final double PLAYER_HIT_FLASH_TIME = 0.25;
+
+    /**
+     * 受击变淡的最大强度（0~1）：越大越接近被打白。
+     *
+     * <p>渲染层会按这个强度叠两遍 SCREEN，所以 0.9 已经能把角色洗到接近白色——
+     * 再高一点就只剩轮廓，看不出是哪只角色、朝哪边了。
+     */
+    public static final double PLAYER_HIT_FLASH_STRENGTH = 0.9;
+
     // ---- 玩家生命 ----
-    /** 玩家最大生命值（需求未对双界版给出明确数值，沿用旧版 3 点作为占位，待 §7.2 道具加成时校调） */
-    public static final int PLAYER_MAX_HP = 5;
+    /**
+     * 玩家最大生命值。
+     *
+     * <p>从 5 点改为 100 点：旧刻度下最小伤害就是 1 点（掉 20% 血），
+     * 想区分“傀儡的践踏”和“灯魇的小弹”根本没有余量——任何差异都会被四舍五入吃掉。
+     * 100 点刻度下每次受击大约掉 4～13 点，既能读出轻重，也够铺开护盾、
+     * 吸血与后续道具加成。
+     */
+    public static final int PLAYER_MAX_HP = 100;
+
+    /**
+     * 一点「生命恢复药剂」回复的生命值（占最大生命的 10%）。
+     *
+     * <p>拾取物的 {@code amount} 是“几瓶药剂”，不是“几点血”，
+     * 因此回血量随最大生命一起写在这里，避免把 2 点血这种旧刻度的数字漏在拾取逻辑里。
+     */
+    public static final int PLAYER_HEAL_PER_PICKUP = 10;
+
+    // ---- 护盾（临时生命值） ----
+    /**
+     * 护盾容量。
+     *
+     * <p>约等于“半条命 + 一次普通小怪的伤害”：能稳定吃掉一次小怪的普通攻击，
+     * 但吃不下精英或首领的一记重招——护盾的价值是把容错从 100 点拉到 130 点左右，
+     * 而不是免死金牌。
+     */
+    public static final double PLAYER_SHIELD_CAPACITY = 30.0;
+
+    // ---- HUD：生命 / 护盾条 ----
+    /**
+     * 血条与护盾条的像素尺寸。
+     *
+     * <p>刻意不占满 HUD 面板：生命条长 200 像素，右端到面板边缘还留着约 200 像素，
+     * 一是给同排的层数/难度文字让位，二是血条一旦铺满整行就再也看不出“还差多少才满”，
+     * 护盾条也要能叠在血条上而不出框。
+     */
+    public static final double HUD_HEALTH_BAR_WIDTH = 200.0;
+    public static final double HUD_HEALTH_BAR_HEIGHT = 15.0;
+
+    /**
+     * 血条按每格多少点生命分段。
+     *
+     * <p>100 点生命配 20 点一格正好 5 格，和旧版“5 颗心”的读法对得上，
+     * 但又保留了每格内部的小数进度——掉 7 点血看得出来，不必再靠猜。
+     */
+    public static final int HUD_HEALTH_SEGMENT_VALUE = 20;
+
+    /** 护盾条高度：比血条略薄，画在血条下沿，避免两条叠在一起分不清。 */
+    public static final double HUD_SHIELD_BAR_HEIGHT = 7.0;
+
 
     // ---- 相位能量（§3.4） ----
     /** 相位能量上限 */

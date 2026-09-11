@@ -71,4 +71,54 @@ public enum EnemySkill {
     public static List<EnemySkill> forEnemy(EnemyKind kind, WorldType world) {
         return Arrays.stream(values()).filter(skill -> skill.kind == kind && skill.world == world).toList();
     }
+
+    /** 该攻击造成的伤害类型：按招式所在的世界归类。 */
+    public DamageType damageType() { return DamageType.ofWorld(world); }
+
+    /**
+     * 该招式打中玩家一次造成的伤害（玩家 100 点生命刻度）。
+     *
+     * <p><b>为什么逐招配数值</b>：旧实现里所有伤害都在结算处写死成 1 点，
+     * 于是傀儡的践踏和灯魇的一发小弹打掉的血一模一样——怪物的压迫感完全没有差别，
+     * 玩家也读不出“这一下很疼、那一下可以硬吃”。现在伤害跟着招式走：
+     * 起手长、范围大、看得见的重招打得更疼，廉价的小弹只削一层皮。
+     *
+     * <p>数值分档（玩家满血 100）：
+     * <ul>
+     *   <li>4 —— 低威胁小弹（灯魇的暗针、法师的扇面弹、鸣钟者的钟波）；</li>
+     *   <li>5～6 —— 普通单发/近身（灯魇追踪光球、法师镜面斩、傀儡地裂、影狼扑咬）；</li>
+     *   <li>8～10 —— 精英与首领的正经招式（处刑者长矛/盾击、鸣钟者光柱、守望者长矛）；</li>
+     *   <li>11～13 —— 精英/首领的压轴重招（守望者的裂隙斩、日审判、冲锋）；</li>
+     *   <li>3 —— 例外：守望者的日光弹幕一次 16 发环形散射，单发必须便宜，
+     *       否则被弹幕擦到就直接融血。</li>
+     * </ul>
+     */
+    public double damage() {
+        return switch (this) {
+            case LANTERN_SEEKER -> 5.0;
+            case LANTERN_NEEDLES -> 4.0;
+            case WOLF_POUNCE -> 5.0;
+            case WOLF_DASH_BITE -> 6.0;
+            case GOLEM_CRACK -> 6.0;
+            case GOLEM_SLAM -> 7.5;
+            case MAGE_FAN -> 4.0;
+            case MAGE_MIRROR -> 6.5;
+            case EXECUTIONER_SPEAR -> 9.0;
+            case EXECUTIONER_BASH -> 8.0;
+            case EXECUTIONER_COMBO -> 10.0;
+            // 纯位移招：撞到人不疼，它的价值在贴身，不在伤害。
+            case EXECUTIONER_APPROACH -> 2.0;
+            case BELL_RING -> 4.0;
+            case BELL_LIGHT_MARK -> 10.0;
+            case BELL_ANNULAR -> 8.5;
+            case BELL_SHADOW_MARK -> 10.0;
+            case WATCHER_BARRAGE -> 3.0;
+            case WATCHER_JUDGMENT -> 12.0;
+            case WATCHER_SPEAR -> 11.0;
+            // 召唤本身不造成伤害。
+            case WATCHER_CALL, WATCHER_SUMMON -> 0.0;
+            case WATCHER_DOUBLE_SLASH -> 13.0;
+            case WATCHER_DASH -> 11.0;
+        };
+    }
 }

@@ -9,6 +9,7 @@ import com.phantomcorridor.model.RoomType;
 import com.phantomcorridor.model.WorldType;
 import com.phantomcorridor.model.entity.Player;
 import com.phantomcorridor.model.entity.PlayerAnimationState;
+import com.phantomcorridor.model.entity.DashTrailPoint;
 import com.phantomcorridor.model.combat.Projectile;
 import com.phantomcorridor.model.combat.EnemyAttack;
 import com.phantomcorridor.model.combat.EnemyVisualEffect;
@@ -16,6 +17,7 @@ import com.phantomcorridor.model.combat.EnemyVisualEffect;
 // 敌方弹体现在由 drawEnemyAttacks 统一绘制。恢复那个方法时把这行一起放开即可。
 // import com.phantomcorridor.model.combat.EnemyProjectile;
 import com.phantomcorridor.model.combat.SummonRift;
+import com.phantomcorridor.model.combat.EnemySystem;
 import com.phantomcorridor.model.entity.Enemy;
 import com.phantomcorridor.model.entity.EnemyKind;
 import com.phantomcorridor.model.room.Direction;
@@ -24,6 +26,9 @@ import com.phantomcorridor.model.room.RoomArea;
 import com.phantomcorridor.model.room.Wall;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.image.Image;
+import javafx.scene.image.PixelReader;
+import javafx.scene.image.PixelWriter;
+import javafx.scene.image.WritableImage;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -44,11 +49,22 @@ import javafx.scene.text.TextAlignment;
 public final class GameRenderer {
 
     /** 小地图：面板边长与每格房间的像素间距（间距要够大，房间之间才看得出连接关系）。 */
-    private static final double MINI_MAP_PANEL_SIZE = 280.0;
+    // 原 280px 面板在战斗外也会过度抢占画面；缩至约 2/3，仍能保留中心跟随与裁剪效果。
+    private static final double MINI_MAP_PANEL_SIZE = 187.0;
     private static final double MINI_MAP_SCALE = 27.0;
 
     private static final Color LIGHT_GOLD = Color.web("#e8bd68");
     private static final Color SHADOW_VIOLET = Color.web("#9b65dc");
+    /** 护盾（临时生命值）的主题色：与光/影都不撞色的冷青，一眼能认出“这是盾”。 */
+    private static final Color SHIELD_BLUE = Color.web("#66d9f0");
+
+    /**
+     * 飘字停留时间（秒）。
+     *
+     * <p>必须与 {@code EnemySystem.DAMAGE_FLASH_TIME} 一致：渲染层用它把
+     * 「还剩多久」换算成透明度与上浮距离，两处不一致会导致数字提前消失或一直挂着。
+     */
+    private static final double DAMAGE_FLASH_TIME = 0.85;
     /** 小地图：已清空的怪物房标记色与“还有东西可拿”的金点色。 */
     private static final Color CLEARED_GREEN = Color.web("#7fbf7a");
     private static final Color LOOT_GOLD = Color.web("#f7d56e");
@@ -65,6 +81,8 @@ public final class GameRenderer {
     private static final Image REWARD_ICONS = loadUiImage("reward_icons_v1.png");
     private static final Image WEAPON_ICONS = loadUiImage("weapons_v1.png");
     private static final Image EQUIPMENT_ICONS = loadUiImage("equipment_v1.png");
+    /** 受击闪白用的"纯白剪影"缓存：按需生成，同一张贴图只算一次。 */
+    private static final Map<Image, Image> WHITE_SILHOUETTES = new HashMap<>();
     private static final Map<String, Image> MONSTER_IMAGES = new HashMap<>();
     private static final Map<String, Image[]> MONSTER_FRAME_SETS = new HashMap<>();
 
@@ -82,6 +100,8 @@ public final class GameRenderer {
         drawPortal(g, session);
         drawPickups(g, session);
         drawInteractionPrompt(g, session);
+        // 拖尾垫在角色之下：残影只该在身后露出来，不能糊在自己脸上。
+        drawDashTrail(g, player, light);
         drawPlayer(g, player, light);
         // 攻击层在角色之后绘制，避免角色把斩击和投射物遮住。
         drawAttacks(g, session, light);
@@ -91,6 +111,8 @@ public final class GameRenderer {
         drawMiniMap(g, session, light);
         drawRoomAnnouncement(g, session);
         drawControls(g, light);
+        // 伤害飘字画在所有面板之上：挨打的即时反馈不该被 HUD 盖住。
+        drawDamageFlashes(g, session);
         if (player.getHp() <= 0) drawDeathOverlay(g, session);
         else if (session.isRunCleared()) drawVictoryOverlay(g, session);
     }
@@ -662,6 +684,111 @@ public final class GameRenderer {
         g.fillText(prompt, x + 12, y + 21);
     }
 
+    /**
+     * 生命条与护盾条。
+     *
+     * <p>三点约束，缺一个就会读错：
+     * <ul>
+     *   <li><b>不占满整行</b>：条长只有 {@link GameConfig#HUD_HEALTH_BAR_WIDTH}，
+     *       右端留给同一行的层数/难度文字，也不至于让“还差多少才满”变得看不出来；</li>
+     *   <li><b>分段 + 数字</b>：每 {@link GameConfig#HUD_HEALTH_SEGMENT_VALUE} 点一段画一根刻度，
+     *       条内直接写「当前/上限」，掉 7 点血也读得出，不必再靠像素长度猜；</li>
+     *   <li><b>护盾叠在血条下沿</b>：护盾是临时生命值，不是第二条并列的血。
+     *       它的长度按剩余点数的绝对值画（30 点盾 = 条长的 30%），
+     *       并夹在血条的已填充范围内——盾再多也不会甩出血条之外。</li>
+     * </ul>
+     */
+    private void drawHealthBar(GraphicsContext g, Player player) {
+        double x = 137.0;
+        double y = 76.0;
+        double width = GameConfig.HUD_HEALTH_BAR_WIDTH;
+        double height = GameConfig.HUD_HEALTH_BAR_HEIGHT;
+        double ratio = Math.max(0.0, Math.min(1.0, player.getHp() / (double) player.maxHp()));
+        double filled = width * ratio;
+
+        g.setFill(Color.rgb(0, 0, 0, 0.72));
+        g.fillRoundRect(x, y, width, height, 7, 7);
+        // 低血时条体本身变暗红，配合条内数字一起给“快死了”的信号。
+        Color blood = ratio > 0.5 ? Color.web("#d75b54")
+                : ratio > 0.25 ? Color.web("#c4453f") : Color.web("#8e2b2b");
+        if (filled > 0.5) {
+            g.setFill(blood);
+            g.fillRoundRect(x, y, filled, height, 7, 7);
+        }
+        // 每格一根刻度：20 点一格，正好 5 格，和旧版 5 颗心的读法对得上。
+        int segments = Math.max(1, (player.maxHp() + GameConfig.HUD_HEALTH_SEGMENT_VALUE - 1)
+                / Math.max(1, GameConfig.HUD_HEALTH_SEGMENT_VALUE));
+        g.setStroke(Color.rgb(0, 0, 0, 0.62));
+        g.setLineWidth(1.0);
+        for (int i = 1; i < segments; i++) {
+            double divider = x + width * i / segments;
+            g.strokeLine(divider, y + 1.5, divider, y + height - 1.5);
+        }
+        g.setStroke(Color.rgb(255, 255, 255, 0.28));
+        g.strokeRoundRect(x, y, width, height, 7, 7);
+
+        // 护盾条：画在血条下沿内侧，长度按“换算到生命刻度”的比例，且不超出已填充的血条范围。
+        if (player.getMaxShield() > 0.0) {
+            double shieldLength = Math.min(width * player.getShieldBarRatio(), filled);
+            if (shieldLength > 0.5) {
+                double barY = y + height - GameConfig.HUD_SHIELD_BAR_HEIGHT - 1.0;
+                g.setFill(Color.color(SHIELD_BLUE.getRed(), SHIELD_BLUE.getGreen(), SHIELD_BLUE.getBlue(), 0.92));
+                g.fillRoundRect(x + 1, barY, shieldLength, GameConfig.HUD_SHIELD_BAR_HEIGHT, 3, 3);
+                g.setStroke(Color.web("#e8f8ff"));
+                g.setLineWidth(1.0);
+                g.strokeRoundRect(x + 1, barY, shieldLength, GameConfig.HUD_SHIELD_BAR_HEIGHT, 3, 3);
+            }
+        }
+
+        g.setFill(Color.web("#ffe9ec"));
+        g.setFont(Font.font("Consolas", FontWeight.BOLD, 13));
+        g.fillText(player.getHp() + " / " + player.maxHp(), x + 7, y + height - 4.0);
+        // 护盾点数写在血条右侧；血量本身占满整条时右端没有空位，这种情况下
+        // 就不写数字——下沿那条护盾条本身已经说明了剩余量，不必压着血量文字画。
+        if (player.hasShield() && filled < width - 34.0) {
+            g.setFill(SHIELD_BLUE);
+            g.fillText("◆ " + formatPoints(player.getShield()), x + width + 12, y + height - 4.0);
+        }
+    }
+
+    /** 伤害点数文本：整数不拖小数点，半整数（4.5）才显一位小数。 */
+    private static String formatPoints(double value) {
+        return Math.abs(value - Math.rint(value)) < 0.05
+                ? String.valueOf((int) Math.rint(value))
+                : String.format("%.1f", value);
+    }
+
+    /**
+     * 受击飘字：玩家挨打与敌人掉血共用一条通道。
+     *
+     * <p>护盾全挡下的那一下按护盾色写「盾」，其余按攻击所属的相位上色
+     * （光界攻击金色、影界紫色、无属性物理用灰白），玩家能直接从数字颜色读出
+     * “这一下是哪种攻击、有没有打穿护盾”。
+     */
+    private void drawDamageFlashes(GraphicsContext g, GameSession session) {
+        if (session.getDamageFlashes().isEmpty()) return;
+        g.setTextAlign(TextAlignment.CENTER);
+        for (EnemySystem.DamageFlash flash : session.getDamageFlashes()) {
+            double life = Math.max(0.0, Math.min(1.0, flash.remaining() / DAMAGE_FLASH_TIME));
+            double alpha = life > 0.6 ? 1.0 : Math.max(0.0, life / 0.6);
+            boolean shielded = flash.onShield();
+            Color color = shielded ? SHIELD_BLUE : switch (flash.type()) {
+                case LIGHT -> LIGHT_GOLD;
+                case SHADOW -> Color.web("#c48cff");
+                case PHYSICAL -> Color.web("#e6e0ea");
+            };
+            double scale = shielded ? 1.0 : 1.0 + (1.0 - life) * 0.35;
+            g.setFont(Font.font("Consolas", FontWeight.BOLD, 17 * scale));
+            g.setFill(Color.color(0.0, 0.0, 0.0, alpha * 0.7));
+            g.fillText(shielded ? "盾 " + formatPoints(flash.value()) : formatPoints(flash.value()),
+                    flash.x() + 1, flash.y() - (1.0 - life) * 26.0 + 1);
+            g.setFill(Color.color(color.getRed(), color.getGreen(), color.getBlue(), alpha));
+            g.fillText(shielded ? "盾 " + formatPoints(flash.value()) : formatPoints(flash.value()),
+                    flash.x(), flash.y() - (1.0 - life) * 26.0);
+        }
+        g.setTextAlign(TextAlignment.LEFT);
+    }
+
     private void drawEquipmentBar(GraphicsContext g, GameSession session) {
         Player player = session.getPlayer();
         g.setFill(Color.rgb(4, 4, 8, .74));
@@ -942,6 +1069,7 @@ public final class GameRenderer {
     private void drawPlayer(GraphicsContext g, Player player, boolean light) {
         if (!(light ? LIGHT_FRAMES : SHADOW_FRAMES).isEmpty()) {
             drawSpritePlayer(g, player, light);
+            drawShieldAura(g, player, light);
             return;
         }
         Color domain = light ? LIGHT_GOLD : SHADOW_VIOLET;
@@ -949,13 +1077,19 @@ public final class GameRenderer {
         double y = Math.rint(player.getY());
         PlayerAnimationState state = player.getAnimationState();
         int frame = (int) (player.getAnimationTime() * 8) & 1;
+        // 矢量兜底造型没有贴图可叠加，直接用半透明表现"变淡"。
+        double flash = player.getHitFlash();
+        if (flash > 0.0) g.setGlobalAlpha(1.0 - 0.75 * GameConfig.PLAYER_HIT_FLASH_STRENGTH * flash);
         if (state == PlayerAnimationState.DOWN) {
             g.setFill(Color.web("#17131d")); g.fillRect(x - 19, y + 4, 38, 10);
             g.setFill(domain); g.fillRect(x - 15, y, 24, 8);
             g.setFill(light ? Color.web("#f4e5bd") : Color.web("#cbb0e8")); g.fillRect(x + 9, y + 2, 9, 9);
+            g.setGlobalAlpha(1.0);
             return;
         }
-        double bob = state == PlayerAnimationState.MOVING && frame == 1 ? -3 : 0;
+        // 矢量兜底造型也要认得冲刺：把它当成更快的移动，而不是站着不动。
+        boolean stepping = state == PlayerAnimationState.MOVING || state == PlayerAnimationState.DASHING;
+        double bob = stepping && frame == 1 ? -3 : 0;
         if (state == PlayerAnimationState.SHIFTING && frame == 1) {
             g.setFill(Color.rgb(255, 255, 255, 0.34)); g.fillRect(x - 24, y - 28, 48, 52);
         }
@@ -967,7 +1101,7 @@ public final class GameRenderer {
         g.fillRect(x - 7, y - 10 + bob, 14, 12);
         g.setFill(Color.web("#18121d")); g.fillRect(x - 4, y - 6 + bob, 3, 3); g.fillRect(x + 3, y - 6 + bob, 3, 3);
         g.setFill(domain);
-        double legOffset = state == PlayerAnimationState.MOVING ? (frame == 0 ? 4 : -4) : 0;
+        double legOffset = stepping ? (frame == 0 ? 4 : -4) : 0;
         g.fillRect(x - 10 + legOffset, y + 11 + bob, 7, 10);
         g.fillRect(x + 3 - legOffset, y + 11 + bob, 7, 10);
         if (state == PlayerAnimationState.ATTACKING) {
@@ -975,19 +1109,42 @@ public final class GameRenderer {
             g.setFill(light ? Color.web("#fff2a3") : Color.web("#d398ff"));
             g.fillRect(x + fx * 14 - (fx < 0 ? 12 : 0), y - 3, 12, 7);
         }
+        drawShieldAura(g, player, light);
+        g.setGlobalAlpha(1.0);
+    }
+
+    /**
+     * 身上还有护盾时，在角色外圈画一道相位护罩。
+     *
+     * <p>护盾是临时生命值，玩家必须一眼看得出“现在这层壳还在不在”，
+     * 所以 HUD 的血条之外，角色本体也要有反馈：护罩随剩余量变淡，快碎时几乎看不见。
+     */
+    private void drawShieldAura(GraphicsContext g, Player player, boolean light) {
+        if (!player.hasShield()) return;
+        double ratio = player.getShieldRatio();
+        double radius = 44.0 - ratio * 4.0;
+        double alpha = 0.20 + ratio * 0.45;
+        g.setStroke(Color.color(SHIELD_BLUE.getRed(), SHIELD_BLUE.getGreen(), SHIELD_BLUE.getBlue(), alpha));
+        g.setLineWidth(2.0 + ratio * 1.6);
+        g.strokeOval(player.getX() - radius, player.getY() - radius, radius * 2, radius * 2);
+        g.setStroke(Color.color(SHIELD_BLUE.getRed(), SHIELD_BLUE.getGreen(), SHIELD_BLUE.getBlue(), alpha * 0.45));
+        g.setLineWidth(6.0);
+        g.strokeArc(player.getX() - radius - 4, player.getY() - radius - 4,
+                (radius + 4) * 2, (radius + 4) * 2,
+                player.getAnimationTime() * 90.0 % 360.0, 96.0, ArcType.OPEN);
     }
 
     private void drawSpritePlayer(GraphicsContext g, Player player, boolean light) {
         Map<String, Image[]> all = light ? LIGHT_FRAMES : SHADOW_FRAMES;
-        String direction = player.getFacingY() < -0.35 ? "back" : player.getFacingY() > 0.35 ? "front"
-                : player.getFacingX() < 0 ? "left" : "right";
+        String direction = spriteDirection(player.getFacingX(), player.getFacingY());
         boolean mirror = direction.equals("left");
         String assetDirection = mirror ? "right" : direction;
         String action = switch (player.getAnimationState()) {
             case ATTACKING -> "slash_" + (assetDirection.equals("right") ? "right" : "recover_front");
             case SHIFTING -> "cast_right";
             case DOWN -> "down_" + assetDirection;
-            case MOVING -> "move_" + assetDirection;
+            // 冲刺没有专属素材，用移动帧 + 拖尾表现"带着残影窜过去"。
+            case MOVING, DASHING -> "move_" + assetDirection;
             default -> "idle_" + assetDirection;
         };
         Image[] frames = all.getOrDefault(action, all.getOrDefault("idle_front", new Image[0]));
@@ -1002,6 +1159,89 @@ public final class GameRenderer {
         // v2 资源的视觉锚点落在胸口附近，而不是画布顶部或脚底。
         double top = Math.rint(player.getY() - drawH * 0.58);
         g.drawImage(sprite, mirror ? left + drawW : left, top, mirror ? -drawW : drawW, drawH);
+        drawHitFlash(g, player, sprite, left, top, drawW, drawH, mirror);
+    }
+
+    /**
+     * 受击变淡：在角色贴图上叠一层预先生成的"纯白剪影"，颜色被洗白，强度随受击剩余时间衰减。
+     *
+     * <p>这里刻意**不用 SCREEN / ADD 之类的混合模式**：窗口尺寸与逻辑分辨率不一致时，渲染前会
+     * 对整个画布做缩放，而混合模式要求渲染管线读回目标像素；部分管线在这种情况下会把混合结果
+     * 当整块区域重新合成，于是角色周围（以及画面中对比强的边缘）会出现一大片发暗、发黑的方块。
+     * 换成"白剪影 + 普通 alpha 混合"之后，效果和缩放比例完全无关，任何管线都稳定。
+     *
+     * <p>剪影保留原贴图的 alpha，所以只覆盖角色自己占的像素：地板、敌人和拖尾都不受影响。
+     */
+    private void drawHitFlash(GraphicsContext g, Player player, Image sprite,
+                              double left, double top, double drawW, double drawH, boolean mirror) {
+        double flash = player.getHitFlash();
+        if (flash <= 0.01) return;
+        g.setGlobalAlpha(GameConfig.PLAYER_HIT_FLASH_STRENGTH * flash);
+        Image silhouette = whiteSilhouette(sprite);
+        g.drawImage(silhouette, mirror ? left + drawW : left, top, mirror ? -drawW : drawW, drawH);
+        g.setGlobalAlpha(1.0);
+    }
+
+    /** 生成一张保留 alpha、颜色全白的贴图副本；同一张原图只生成一次，之后走缓存。 */
+    private static Image whiteSilhouette(Image source) {
+        return WHITE_SILHOUETTES.computeIfAbsent(source, image -> {
+            int width = (int) image.getWidth();
+            int height = (int) image.getHeight();
+            WritableImage silhouette = new WritableImage(width, height);
+            PixelReader reader = image.getPixelReader();
+            PixelWriter writer = silhouette.getPixelWriter();
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    writer.setArgb(x, y, (reader.getArgb(x, y) & 0xff000000) | 0x00ffffff);
+                }
+            }
+            return silhouette;
+        });
+    }
+
+    /**
+     * 冲刺拖尾：把冲刺途中按帧记录的残影铺在角色身后，越旧越透明，冲刺结束后自然消散。
+     *
+     * <p>残影固定取移动帧而不是当前动作帧——冲刺中角色只有"冲刺"这一个动作，
+     * 与本体共用同一套素材，看起来才像同一道残影而不是另一只角色跟着跑。
+     *
+     * <p>素材缺失时退回矢量方块：拖尾是冲刺唯一的视觉反馈，不该因为图片加载失败就整个消失。
+     */
+    private void drawDashTrail(GraphicsContext g, Player player, boolean light) {
+        List<DashTrailPoint> trail = player.getDashTrail();
+        if (trail.isEmpty()) return;
+        double directionX = player.getDashDirectionX();
+        double directionY = player.getDashDirectionY();
+        String direction = spriteDirection(directionX, directionY);
+        boolean mirror = direction.equals("left");
+        String assetDirection = mirror ? "right" : direction;
+        Map<String, Image[]> all = light ? LIGHT_FRAMES : SHADOW_FRAMES;
+        Image[] frames = all.getOrDefault("move_" + assetDirection, new Image[0]);
+        Image sprite = frames.length == 0 ? null : frames[0];
+        double drawW = 160.0;
+        double drawH = sprite == null ? 0.0 : drawW * sprite.getHeight() / Math.max(1.0, sprite.getWidth());
+        for (DashTrailPoint point : trail) {
+            // life() 从 1（刚生成）衰减到 0（消散），所以越靠后的残影越淡。
+            double alpha = GameConfig.DASH_TRAIL_ALPHA * point.life();
+            if (alpha <= 0.01) continue;
+            double left = Math.rint(point.x() - drawW / 2.0);
+            double top = Math.rint(point.y() - drawH * 0.58);
+            if (sprite != null) {
+                g.setGlobalAlpha(alpha);
+                g.drawImage(sprite, mirror ? left + drawW : left, top, mirror ? -drawW : drawW, drawH);
+            } else {
+                g.setGlobalAlpha(alpha);
+                g.setFill(light ? LIGHT_GOLD : SHADOW_VIOLET);
+                g.fillRect(Math.rint(point.x() - 13.0), Math.rint(point.y() - 18.0), 26, 36);
+            }
+        }
+        g.setGlobalAlpha(1.0);
+    }
+
+    /** 角色素材的四方向（只有左向没有独立素材，绘制时用右向镜像）。 */
+    private static String spriteDirection(double facingX, double facingY) {
+        return facingY < -0.35 ? "back" : facingY > 0.35 ? "front"
+                : facingX < 0 ? "left" : "right";
     }
 
     private void drawRoomAnnouncement(GraphicsContext g, GameSession session) {
@@ -1054,10 +1294,7 @@ public final class GameRenderer {
         g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 17));
         g.setFill(Color.web("#efe7d8"));
         g.fillText("生命", 78, 91);
-        for (int i = 0; i < GameConfig.PLAYER_MAX_HP; i++) {
-            g.setFill(i < player.getHp() ? Color.web("#d75b54") : Color.web("#3b2528"));
-            g.fillOval(137 + i * 25.0, 76, 14, 14);
-        }
+        drawHealthBar(g, player);
         // 层数与难度放在第一行右侧：并进下面那行状态文字会顶出面板。
         g.setFill(domain);
         g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 15));
@@ -1120,7 +1357,7 @@ public final class GameRenderer {
         g.setTextAlign(TextAlignment.CENTER);
         g.setFill(light ? Color.rgb(237, 210, 156, 0.56) : Color.rgb(198, 169, 230, 0.58));
         g.setFont(Font.font("Microsoft YaHei UI", 13));
-        g.fillText("WASD / 方向键移动    ·    鼠标瞄准 / 左键攻击    ·    E 交互    ·    TAB 穿梭双界    ·    ESC 暂停",
+        g.fillText("WASD / 方向键移动    ·    鼠标瞄准 / 左键攻击    ·    空格 闪避冲刺    ·    E 交互    ·    TAB 穿梭双界    ·    ESC 暂停",
                 AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT - 24.0);
         g.setTextAlign(TextAlignment.LEFT);
     }

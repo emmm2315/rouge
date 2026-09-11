@@ -6,6 +6,7 @@ import com.phantomcorridor.view.GameView;
 import javafx.scene.input.KeyCode;
 import com.phantomcorridor.config.AppConfig;
 import com.phantomcorridor.config.Settings;
+import java.util.function.Consumer;
 
 /** 游戏输入、模型更新和渲染调度。 */
 public final class GameController {
@@ -19,24 +20,34 @@ public final class GameController {
     private boolean shiftHeld;
     private boolean interactHeld;
     private boolean attackHeld;
+    private boolean dashHeld;
     private double aimX;
     private double aimY;
     private final Settings settings;
     private final Runnable onMainMenu;
+    private final Consumer<GameSession> onSessionUpdated;
 
     public GameController(GameView view, Runnable onPauseRequested, Settings settings) {
-        this(view, onPauseRequested, settings, () -> { });
+        this(view, onPauseRequested, settings, () -> { }, session -> { });
     }
 
     public GameController(GameView view, Runnable onPauseRequested, Settings settings, Runnable onMainMenu) {
+        this(view, onPauseRequested, settings, onMainMenu, session -> { });
+    }
+
+    /** @param onSessionUpdated 用于同步音乐等只读的表现层状态。 */
+    public GameController(GameView view, Runnable onPauseRequested, Settings settings, Runnable onMainMenu,
+                          Consumer<GameSession> onSessionUpdated) {
         this.view = view;
         this.onPauseRequested = onPauseRequested;
         this.settings = settings;
         this.onMainMenu = onMainMenu;
+        this.onSessionUpdated = onSessionUpdated == null ? session -> { } : onSessionUpdated;
         this.loop = new GameLoop() {
             @Override
             protected void update(double dt) {
                 session.update(dt, input.horizontal(), input.vertical(), aimX, aimY, attackHeld);
+                GameController.this.onSessionUpdated.accept(session);
             }
             @Override
             protected void render(double frameDelta) {
@@ -56,8 +67,10 @@ public final class GameController {
         shiftHeld = false;
         interactHeld = false;
         attackHeld = false;
+        dashHeld = false;
         aimX = session.getPlayer().getX() + 1.0;
         aimY = session.getPlayer().getY();
+        onSessionUpdated.accept(session);
         view.render(session, 0.0);
     }
 
@@ -77,6 +90,7 @@ public final class GameController {
         shiftHeld = false;
         interactHeld = false;
         attackHeld = false;
+        dashHeld = false;
     }
 
     private void keyPressed(KeyCode key) {
@@ -106,6 +120,11 @@ public final class GameController {
                 if (!interactHeld) session.requestInteract();
                 interactHeld = true;
             }
+            case SPACE -> {
+                // 同 E：长按会连发 keyPressed，冲刺必须一次按下只算一次（冷却由玩家模型把关）。
+                if (!dashHeld) session.requestDash();
+                dashHeld = true;
+            }
             case ESCAPE, P -> onPauseRequested.run();
             default -> { }
         }
@@ -119,6 +138,7 @@ public final class GameController {
             case D, RIGHT -> input.setRight(false);
             case TAB -> shiftHeld = false;
             case E -> interactHeld = false;
+            case SPACE -> dashHeld = false;
             default -> { }
         }
     }

@@ -7,6 +7,7 @@
  */
 module com.phantomcorridor {
     requires javafx.controls;
+    requires javafx.media;
     requires java.prefs;
     requires java.desktop;
 

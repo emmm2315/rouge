@@ -29,11 +29,45 @@ public final class RoomNavigationSystem {
     }
 
     public void move(Player player, double directionX, double directionY, double dt) {
+        double speed = GameConfig.PLAYER_BASE_SPEED
+                * (player.getCurrentWorld() == WorldType.SHADOW ? GameConfig.SHADOW_SPEED_MULTIPLIER : 1.0);
+        displace(player, directionX, directionY, dt, speed);
+    }
+
+    /**
+     * 冲刺位移：与常规移动共用同一套碰撞、房间轮廓与切换门判定，只有速度换成冲刺速度。
+     *
+     * <p>冲刺不能走"直接改坐标"的捷径——那会让玩家穿墙、穿相位墙甚至直接穿过关着的门。
+     */
+    public void dash(Player player, double directionX, double directionY, double dt) {
+        displace(player, directionX, directionY, dt, GameConfig.DASH_SPEED);
+    }
+
+    /**
+     * 受击击退：沿指定方向把角色推开固定距离，撞墙/撞房间轮廓就地停住。
+     *
+     * <p>与移动共用同一套落点判定，但**不做房间切换**：被打得穿过一扇开着的门、
+     * 直接飞进隔壁没清完的房间，既打断操作也不合直觉，击退只在当前房间内生效。
+     */
+    public void knockback(Player player, double directionX, double directionY, double distance) {
+        double length = Math.hypot(directionX, directionY);
+        if (length == 0.0 || distance <= 0.0) return;
+        double dx = directionX / length * distance;
+        double dy = directionY / length * distance;
+        double nextX = player.getX() + dx;
+        if (canOccupy(nextX, player.getY(), GameConfig.PLAYER_RADIUS, player.getCurrentWorld())) {
+            player.setPosition(nextX, player.getY());
+        }
+        double nextY = player.getY() + dy;
+        if (canOccupy(player.getX(), nextY, GameConfig.PLAYER_RADIUS, player.getCurrentWorld())) {
+            player.setPosition(player.getX(), nextY);
+        }
+    }
+
+    private void displace(Player player, double directionX, double directionY, double dt, double speed) {
         roomChanged = false;
         double length = Math.hypot(directionX, directionY);
         if (length == 0.0) return;
-        double speed = GameConfig.PLAYER_BASE_SPEED
-                * (player.getCurrentWorld() == WorldType.SHADOW ? GameConfig.SHADOW_SPEED_MULTIPLIER : 1.0);
         double dx = directionX / length * speed * dt;
         double dy = directionY / length * speed * dt;
         double nextX = player.getX() + dx;

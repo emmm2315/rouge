@@ -2,6 +2,7 @@ package com.phantomcorridor;
 
 import com.phantomcorridor.config.AppConfig;
 import com.phantomcorridor.config.Settings;
+import com.phantomcorridor.audio.AudioManager;
 import com.phantomcorridor.controller.GameController;
 import com.phantomcorridor.controller.LoginController;
 import com.phantomcorridor.controller.MainMenuController;
@@ -38,7 +39,7 @@ import javafx.stage.Stage;
  */
 public class App extends Application {
 
-    /** 全屏切换快捷键 1：F11 */
+    /** 全屏切换快捷A键 1：F11 */
     private static final KeyCombination FULLSCREEN_F11 = new KeyCodeCombination(KeyCode.F11);
 
     /** 全屏切换快捷键 2：Alt+Enter */
@@ -57,6 +58,7 @@ public class App extends Application {
     private PauseView pauseView;
     private SceneManager sceneManager;
     private GameController gameController;
+    private AudioManager audio;
     private double windowedWidth = AppConfig.VIEW_WIDTH;
     private double windowedHeight = AppConfig.VIEW_HEIGHT;
 
@@ -68,6 +70,7 @@ public class App extends Application {
 
         // 玩家档案与偏好设置分离，恢复默认设置不会再清空玩家身份。
         Settings settings = new Settings();
+        audio = new AudioManager(settings);
         PlayerProfile profile = PlayerProfile.loadLocal();
         sceneManager = new SceneManager(root);
 
@@ -77,7 +80,8 @@ public class App extends Application {
         loginView = loginController.getView();
         mainMenuView = mainMenuController.getView();
         gameView = new GameView();
-        gameController = new GameController(gameView, this::showPause, settings, this::showMainMenu);
+        gameController = new GameController(gameView, this::showPause, settings, this::showMainMenu,
+                audio::syncGameMusic);
         pauseView = new PauseView(this::resumeGame, this::showMainMenu);
         root.getChildren().addAll(loginView, mainMenuView, gameView, pauseView);
 
@@ -128,17 +132,20 @@ public class App extends Application {
 
     /** 进入登录界面（应用启动默认） */
     private void showLogin() {
+        audio.playMenu();
         sceneManager.switchTo(GameState.LOGIN, loginView);
     }
 
     /** 切换到主菜单（登录成功，或从暂停界面/结算返回） */
     public void showMainMenu() {
+        audio.playMenu();
         sceneManager.switchTo(GameState.MAIN_MENU, mainMenuView);
     }
 
     /** 进入游戏界面（主菜单点击"开始游戏"） */
     public void showGame() {
         gameController.newRun();
+        audio.playExploration();
         sceneManager.switchTo(GameState.PLAYING, gameView);
     }
 

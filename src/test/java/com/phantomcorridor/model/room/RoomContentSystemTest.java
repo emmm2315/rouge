@@ -189,6 +189,25 @@ class RoomContentSystemTest {
     }
 
     @Test
+    void healthPickupRestoresTenPointsPerPotionOnTheHundredScale() {
+        // 生命刻度改成 100 点之后，拾取物的 amount 是“几瓶药剂”而不是“几点血”：
+        // 两瓶 = 20 点。旧实现直接把 amount 当点数用，在 100 点血条上等于没回血。
+        Room room = openRoom(2, RoomType.REWARD);
+        Player player = new Player(600, 480);
+        player.clearShield();
+        player.takeDamage(50.0, com.phantomcorridor.model.combat.DamageType.SHADOW);
+        assertEquals(50, player.getHp());
+        RoomContentSystem content = new RoomContentSystem();
+        content.reset(5L, 1);
+        room.loot().addPickup(new Pickup(Pickup.Type.HEALTH, 610, 480, 2));
+
+        content.interact(room, player);
+
+        assertEquals(70, player.getHp(), "两瓶生命恢复药剂应当回 20 点生命");
+        assertTrue(room.loot().pickups().isEmpty(), "拾取之后药剂应当从地面消失");
+    }
+
+    @Test
     void equipmentPromptShowsTheItemName() {
         Room room = openRoom(2, RoomType.REWARD);
         Player player = new Player(600, 480);
@@ -198,6 +217,22 @@ class RoomContentSystemTest {
         room.loot().addPickup(equipment);
 
         assertEquals("E  装备 " + equipment.displayName(), content.prompt(room, player));
+    }
+
+    @Test
+    void rewardRoomContentsStayCenteredInsteadOfFollowingTheEntryPosition() {
+        Room room = openRoom(12, RoomType.REWARD);
+        Player player = new Player(120, 180);
+        RoomContentSystem content = new RoomContentSystem();
+        content.reset(42L, 1);
+
+        content.enterRoom(room, player);
+
+        assertEquals(2, room.loot().pickups().size());
+        double averageX = room.loot().pickups().stream().mapToDouble(Pickup::x).average().orElseThrow();
+        double averageY = room.loot().pickups().stream().mapToDouble(Pickup::y).average().orElseThrow();
+        assertEquals((room.minX() + room.maxX()) / 2.0, averageX);
+        assertEquals((room.minY() + room.maxY()) / 2.0, averageY);
     }
 
     @Test

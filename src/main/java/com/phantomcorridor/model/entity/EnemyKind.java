@@ -38,4 +38,25 @@ public enum EnemyKind {
             case WOLF, GOLEM, EXECUTIONER -> false;
         };
     }
+
+    /**
+     * 该物种的**基础**撞击伤害（玩家 100 点生命下的取值）。
+     *
+     * <p>这是“这只怪撞到你就掉多少血”的物种底价，也是它没有单独配数值的招式的默认伤害。
+     * 每个招式自己的伤害另在 {@link com.phantomcorridor.model.combat.EnemySkill} 上逐条配置：
+     * 同一只怪的重招与小招不该打掉同样多的血。
+     *
+     * <p>参考刻度：玩家 100 点生命，普通小怪一发 4～6 点、精英 8～10 点、首领 9～12 点。
+     */
+    public double attackDamage() {
+        return switch (this) {
+            case LANTERN -> 4.0;
+            case WOLF -> 5.0;
+            case GOLEM -> 8.0;
+            case MAGE -> 5.0;
+            case EXECUTIONER -> 10.0;
+            case BELL -> 8.0;
+            case WATCHER -> 12.0;
+        };
+    }
 }

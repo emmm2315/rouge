@@ -5,6 +5,16 @@ import com.phantomcorridor.model.WorldType;
 import com.phantomcorridor.model.entity.Player;
 import com.phantomcorridor.model.room.RoomNavigationSystem;
 
+/**
+ * 第 6 天的初版敌人模型，已被 {@link com.phantomcorridor.model.entity.Enemy} 取代。
+ *
+ * <p><b>当前没有任何生产代码引用本类</b>：敌人现在由 {@code EnemySystem} +
+ * {@code model.entity.Enemy} 驱动，只有测试在用它自己的 {@link EnemyProjectileSystem} 回路。
+ *
+ * <p>它 {@code release()} 里写死的 {@code 3.0} 伤害属于旧刻度，**不要**照着它改数值——
+ * 现行伤害一律配置在 {@link EnemySkill#damage()} 上，命中结算见
+ * {@code EnemySystem.resolvePlayerHit}。保留本文件只是为了对照旧实现。
+ */
 public final class Enemy {
     public enum State { IDLE, CHASE, WINDUP, RECOVERY, HURT, DEAD }
     private final EnemyType type; private final WorldType world; private double x, y; private int hp;

@@ -25,6 +25,8 @@ public final class Enemy {
     private double summonPressure;
     /** 首领召唤：已经用掉的血量阶段数（0 起），由召唤系统在真正召唤成功时推进。 */
     private int summonStage;
+    /** 首领自上次召唤后已经完整起手的普通技能数，防止召唤机制吞掉原有出招轮换。 */
+    private int normalCastsSinceSummon;
     /** 是否为首领召唤出来的造物（首领倒下或离开该界时随之溃散）。 */
     private final boolean summoned;
     private int avoidanceSide;
@@ -98,6 +100,24 @@ public final class Enemy {
     public double getX() { return x; }
     public double getY() { return y; }
     public void setPosition(double x, double y) { this.x = x; this.y = y; }
+
+    /**
+     * 可受击区域的中心。
+     *
+     * <p>敌人的坐标是用于移动、贴墙和站位的「脚下落点」；若直接拿这个点做受击判定，
+     * 大体型精英与首领就会出现只有攻击脚边才算命中的问题。战斗判定改为模型胸腹部，
+     * 视觉根锚点仍保持不变，因此不会影响寻路或贴墙碰撞。
+     */
+    public double getHitboxCenterX() { return x; }
+
+    /** 模型中心略偏下，覆盖躯干而不把头顶、武器与披风边缘算进受击框。 */
+    public double getHitboxCenterY() { return y - hitboxCenterOffset(kind); }
+
+    /**
+     * 受击框半径：比对应模型的可见宽度小一圈，既不会「擦到披风」就受伤，
+     * 也不会要求玩家打到脚底。移动/障碍物的脚下占位仍由 EnemySystem 单独处理。
+     */
+    public double getHitboxRadius() { return hitboxRadius(kind); }
     public int getHp() { return hp; }
     public int getMaxHp() { return maxHp; }
     public boolean isDead() { return hp <= 0; }
@@ -157,6 +177,16 @@ public final class Enemy {
 
     /** 血量阶段召唤真正放出去之后才推进，否则阶段会被白白吃掉。 */
     public void advanceSummonStage() { summonStage++; }
+
+    /** 记录一次非召唤首领技能；普通敌人无需使用该计数。 */
+    public void recordNormalCast() {
+        if (boss) normalCastsSinceSummon++;
+    }
+
+    public int getNormalCastsSinceSummon() { return normalCastsSinceSummon; }
+
+    /** 新一波增援开始后重新计数，至少先放两次本体技能才允许纯补位召唤。 */
+    public void resetNormalCastsSinceSummon() { normalCastsSinceSummon = 0; }
 
     public void updateTimers(double dt) {
         alertRemaining = Math.max(0.0, alertRemaining - dt);
@@ -302,5 +332,13 @@ public final class Enemy {
         double raw = (Math.max(1, floor) - 1) * GameConfig.ENEMY_DEFENSE_PER_FLOOR * multiplier;
         int cap = (int) Math.round(GameConfig.ENEMY_DEFENSE_MAX * multiplier);
         return Math.min(cap, (int) Math.floor(raw));
+    }
+
+    private static double hitboxCenterOffset(EnemyKind kind) {
+        return kind == EnemyKind.WATCHER ? 92.0 : kind.elite() ? 66.0 : 51.0;
+    }
+
+    private static double hitboxRadius(EnemyKind kind) {
+        return kind == EnemyKind.WATCHER ? 62.0 : kind.elite() ? 45.0 : 35.0;
     }
 }

@@ -57,8 +57,12 @@ public final class RoomContentSystem {
         loot.markRolled();
         switch (room.type()) {
             case REWARD -> {
-                loot.addPickup(new Pickup(Pickup.Type.COIN, player.getX() + 36, player.getY(), 5));
-                loot.addPickup(new Pickup(Pickup.Type.EQUIPMENT, player.getX() - 36, player.getY(),
+                // 奖励不再跟随玩家刚进门的位置：以房间几何中心为原点摆放成一个小组，
+                // 不规则房间也能稳定落在主区域中央。
+                double x = centerX(room);
+                double y = centerY(room);
+                loot.addPickup(new Pickup(Pickup.Type.COIN, x + 28, y, 5));
+                loot.addPickup(new Pickup(Pickup.Type.EQUIPMENT, x - 28, y,
                         equipmentIndex(room, 1)));
             }
             case SHOP -> {
@@ -206,7 +210,9 @@ public final class RoomContentSystem {
             case COIN -> player.addCoins(pickup.amount());
             case PHASE_FRAGMENT -> player.restorePhaseEnergy(
                     GameConfig.PHASE_ENERGY_PER_FRAGMENT * Math.max(1, pickup.amount()));
-            case HEALTH -> player.restoreHealth(Math.max(1, pickup.amount()));
+            // 药剂按“瓶”算：一瓶回复 PLAYER_HEAL_PER_PICKUP 点生命，
+            // 拾取物里的 amount 是瓶数，不随玩家最大生命（100 点）的刻度一起变形。
+            case HEALTH -> player.restoreHealthByPickups(Math.max(1, pickup.amount()));
             case ITEM -> player.addItem(ItemType.values()[Math.floorMod(pickup.amount(), ItemType.values().length)]);
             case EQUIPMENT -> player.equip(
                     EquipmentType.values()[Math.floorMod(pickup.amount(), EquipmentType.values().length)]);
