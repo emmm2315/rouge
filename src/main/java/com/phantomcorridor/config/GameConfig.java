@@ -73,13 +73,15 @@ public final class GameConfig {
      * 攻击充能（蓝条）上限：决定一段连射能打多少发，充能耗尽后按
      * {@link #ATTACK_CHARGE_RECOVERY_TIME} 逐发回复。
      *
-     * <p>原先只有 5 发，房间里的敌人变多、又会整房索敌之后明显不够用，
-     * 这里放宽到 10 发；后续道具（通用/双界）会在此之上再加容量。
+     * <p>数值重构（战斗刻度 ×10）之后敌人生命值整体上了一个量级，如果充能上限还停在 10 发，
+     * 打空一管蓝条就只够蹭掉一只小怪的血皮，房间会退化成「打五秒、等十秒」的换弹游戏。
+     * 因此容量与回复速度一起放宽：满管 16 发、每 0.7 秒回一发，
+     * 持续输出从 0.74 发/秒提到 1.43 发/秒，大血量目标才打得动。
      */
-    public static final int ATTACK_CHARGE_MAX = 10;
+    public static final int ATTACK_CHARGE_MAX = 16;
     public static final int LIGHT_ATTACK_CHARGE_COST = 1;
     public static final int SHADOW_ATTACK_CHARGE_COST = 1;
-    public static final double ATTACK_CHARGE_RECOVERY_TIME = 1.35;
+    public static final double ATTACK_CHARGE_RECOVERY_TIME = 0.5;
 
     // ---- 装备专属效果（《新增 15 件装备与攻击特效设计》§五） ----
     /** 相位陀螺：成功切界后的攻速窗口时长（秒）与间隔倍率。 */
@@ -111,6 +113,39 @@ public final class GameConfig {
     /** 普通战斗房的敌人数量（含可能替换其中一只的精英）。 */
     public static final int BATTLE_ENEMY_MIN = 5;
     public static final int BATTLE_ENEMY_MAX = 7;
+
+    /** 每往下一层，战斗房多刷几只怪：第 N 层 = 基础数量 + (N-1) × 该值。 */
+    public static final int BATTLE_ENEMY_PER_FLOOR = 1;
+
+    /** 单间战斗房的敌人数量硬上限：再多就会把房间挤成一团、也打不动。 */
+    public static final int BATTLE_ENEMY_MAX_CAP = 12;
+
+    /** 精英替换普通怪的起始层数：第 1 层只出普通怪，让玩家先认熟基础招式。 */
+    public static final int BATTLE_ELITE_MIN_FLOOR = 2;
+
+    /** 精英替换概率 = 基础 + (层数-1) × 每层增量，再封顶。 */
+    public static final double BATTLE_ELITE_CHANCE_BASE = 0.20;
+    public static final double BATTLE_ELITE_CHANCE_PER_FLOOR = 0.10;
+    public static final double BATTLE_ELITE_CHANCE_CAP = 0.60;
+
+    /**
+     * 战斗房在第 N 层应当刷多少只怪（已封顶）。
+     *
+     * @param floor 层数（从 1 开始）
+     * @param extra 随机附加值（{@code 0 .. BATTLE_ENEMY_MAX - BATTLE_ENEMY_MIN}）
+     */
+    public static int battleEnemyCount(int floor, int extra) {
+        int base = BATTLE_ENEMY_MIN + Math.max(0, extra)
+                + (Math.max(1, floor) - 1) * BATTLE_ENEMY_PER_FLOOR;
+        return Math.min(BATTLE_ENEMY_MAX_CAP, base);
+    }
+
+    /** 第 N 层战斗房里出现一只精英的概率。 */
+    public static double battleEliteChance(int floor) {
+        if (floor < BATTLE_ELITE_MIN_FLOOR) return 0.0;
+        return Math.min(BATTLE_ELITE_CHANCE_CAP,
+                BATTLE_ELITE_CHANCE_BASE + (floor - 1) * BATTLE_ELITE_CHANCE_PER_FLOOR);
+    }
 
     // ---- 索敌（敌人 AI 感知范围） ----
     /** 敌人生成 / 重新回到当前世界后的首次开火前摇（秒），玩家进房后有一段可反应的缓冲。 */
@@ -252,6 +287,106 @@ public final class GameConfig {
 
     /** 召唤物成型后的起手时间（秒）：刚钻出裂隙不会立刻贴脸开火。 */
     public static final double WATCHER_SUMMON_ALERT = 0.8;
+
+    /**
+     * 每一波召唤的怪物数量，按层取（下标 0 对应第 1 层）。
+     *
+     * <p>越往深处走，首领一次叫出来的东西越多：第 1～2 层两只（与旧版一致），
+     * 第 3～4 层三只，第 5 层四只。超出层数时取最后一个值。
+     */
+    public static final int[] SUMMON_WAVE_BY_FLOOR = {2, 2, 3, 3, 4};
+
+    /** 场上同时存在的召唤物上限，按层取（含还没成型的裂隙）。 */
+    public static final int[] SUMMON_ALIVE_BY_FLOOR = {4, 4, 5, 5, 6};
+
+    /** 首领跌破最后一个血量阶段之后，每一波再追加几只——「血量越低越疯狂」。 */
+    public static final int SUMMON_WAVE_LOW_HEALTH_BONUS = 1;
+
+    /** 从第几层开始，首领的召唤物里会出现一只精英。 */
+    public static final int SUMMON_ELITE_FROM_FLOOR = 3;
+
+    /** 第 N 层一波召唤的数量。 */
+    public static int summonWaveSize(int floor) {
+        return SUMMON_WAVE_BY_FLOOR[Math.min(SUMMON_WAVE_BY_FLOOR.length - 1, Math.max(0, floor - 1))];
+    }
+
+    /** 第 N 层场上召唤物上限。 */
+    public static int summonAliveCap(int floor) {
+        return SUMMON_ALIVE_BY_FLOOR[Math.min(SUMMON_ALIVE_BY_FLOOR.length - 1, Math.max(0, floor - 1))];
+    }
+
+    /** 第 N 层的召唤物里是否已经会混入精英。 */
+    public static boolean summonIncludesElites(int floor) {
+        return floor >= SUMMON_ELITE_FROM_FLOOR;
+    }
+
+    // ---- 敌方弹幕：碰墙反弹 ----
+    /** 反弹弹体的撞墙反弹次数上限（防止在窄缝里无限弹射）。 */
+    public static final int ENEMY_PROJECTILE_MAX_BOUNCES = 3;
+
+    /** 反弹弹体的存活时间加成（秒/次反弹）：弹得越久，寿命也要跟着放长。 */
+    public static final double ENEMY_BOUNCE_LIFETIME_BONUS = 1.6;
+
+    /** 反弹弹体的单次最小位移，避免贴墙时法线判定抖动。 */
+    public static final double ENEMY_BOUNCE_MIN_STEP = 1.0;
+
+    /**
+     * 环形弹幕的标记角度：技能的「相邻弹体夹角」等于它时，改成把 count 发均匀铺满整圈。
+     *
+     * <p>放在 GameConfig 而不是 EnemySkill 里，是因为枚举常量在静态初始化时就会用到它——
+     * 写在枚举自己的静态字段里会读到默认值 0（经典的前向引用坑）。
+     */
+    public static final double ENEMY_RING_COVERAGE = 360.0;
+
+    // ---- 敌人素材渲染（v1 与 v2 两套素材共用同一缩放刻度） ----
+    /**
+     * 怪物本体帧画布的显示缩放。
+     *
+     * <p>两套素材包都按「画布 1:1 承载目标身高」导出（普通怪 256、精英 320、首领 448/640），
+     * 于是用同一个系数缩放整张画布，就能自动保持各物种的相对体型：孢子比甲虫高、
+     * 螳爵比炮蟹高，而画布留白（树冠、镰臂、炮管）不会被误当成碰撞体积。
+     */
+    public static final double MONSTER_RENDER_SCALE = 0.70;
+
+    /** 首领半血换形的收招时间（秒）：无伤害，但期间不出招，给玩家读新形态的窗口。 */
+    public static final double BOSS_TRANSFORM_LOCK = 1.2;
+
+    /** 预警判定之后残留显示的默认时间（秒），用来播放爆开 / 命中特效。 */
+    public static final double TELEGRAPH_RESIDUAL_TIME = 0.34;
+
+    // ---- v2 扩展包：召唤细节补充 ----
+    /** 召唤型首领的开场缓冲（秒）：与 {@link #WATCHER_SUMMON_OPENING_DELAY} 同义，供档案复用。 */
+    public static final double WATCHER_SUMMON_OPENING_GRACE = WATCHER_SUMMON_OPENING_DELAY;
+
+    // ---- v2 扩展包：根篱（临时阻挡地形） ----
+    /** 根篱的可达性校验网格步长（像素）：越细越准，越粗越省。 */
+    public static final double ROOT_WALL_GRID_STEP = 40.0;
+
+    /** 根篱校验时允许保留的最小可达面积比例：低于它说明这一招会把房间封死。 */
+    public static final double ROOT_WALL_MIN_REACHABLE_RATIO = 0.55;
+
+    /** 根篱落点必须留出的玩家活动半径（像素）：不许长在玩家脚下。 */
+    public static final double ROOT_WALL_PLAYER_CLEARANCE = 100.0;
+
+    /** 单道根篱的总跨度上限（像素）：太长会把整间房一分为二。 */
+    public static final double ROOT_WALL_MAX_SPAN = 520.0;
+
+    // ---- v2 扩展包：换位（镜砂术士的镜门） ----
+    /** 换位落点与玩家的最小距离（像素）。 */
+    public static final double TELEPORT_PLAYER_CLEARANCE = 160.0;
+
+    /** 搜索换位落点的圈数上限。 */
+    public static final int TELEPORT_SEARCH_RINGS = 6;
+
+    /** 换位落地后的收招（秒）：落地立刻起手会变成贴脸瞬狙。 */
+    public static final double TELEPORT_LANDING_RECOVERY = 1.1;
+
+    // ---- v2 扩展包：幻象 ----
+    /** 幻象本体的存活时间（秒）。 */
+    public static final double ILLUSION_LIFETIME = 1.1;
+
+    /** 幻象与本体之间的距离（像素）。 */
+    public static final double ILLUSION_DISTANCE = 120.0;
 
     public static final double ENEMY_PROJECTILE_SPEED = 190.0;
 

@@ -242,7 +242,8 @@ class PlayerTest {
         // 设计文档的口径：伤害 = 基础伤害 × 段系数 ×（1 + 同类加成之和）。
         // 面板要把「装备给的那一份」单独显示出来，所以装备与道具的加成要能分别读到。
         Player player = new Player(0, 0);
-        assertEquals(1.0, player.getCurrentBaseDamage(), 1e-9, "基础伤害是 1 点");
+        assertEquals(Player.BASE_ATTACK_DAMAGE, player.getCurrentBaseDamage(), 1e-9,
+                "基础伤害就是角色面板上的基础攻击力");
         assertEquals(0.0, player.getDamageBonus(), 1e-9);
         assertEquals(0.0, player.getEquipmentDamageBonus(), 1e-9);
         assertEquals(1.0, player.damageMultiplier(WorldType.LIGHT), 1e-9);
@@ -250,7 +251,8 @@ class PlayerTest {
         player.equip(EquipmentType.DAWN_WAND);
         assertEquals(0.20, player.getEquipmentDamageBonus(), 1e-9, "晨曦法杖光界 +20%");
         assertEquals(1.20, player.damageMultiplier(WorldType.LIGHT), 1e-9);
-        assertEquals("1.20", player.getDamageText());
+        // HUD 写的是「这一下会打出多少点」：基础 10 × 1.20 = 12。
+        assertEquals("12", player.getDamageText());
 
         player.equip(EquipmentType.DAWN_SEAL);
         assertEquals(0.30, player.getEquipmentDamageBonus(), 1e-9, "圣印的 +10% 与法杖相加");

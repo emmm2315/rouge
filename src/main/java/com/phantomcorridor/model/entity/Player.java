@@ -475,8 +475,17 @@ public final class Player {
     public double getPhaseEnergy() { return phaseEnergy; }
     public int getAttackCharges() { return attackCharges; }
     public int getMaxAttackCharges() { return maxAttackCharges; }
-    /** 角色的基础攻击力（不含任何加成）：HUD 用它把“本身”和“装备加上去的”分开显示。 */
-    public static final int BASE_ATTACK_DAMAGE = 1;
+    /**
+     * 角色的基础攻击力（不含任何加成）：HUD 用它把“本身”和“装备加上去的”分开显示。
+     *
+     * <p><b>战斗刻度重构</b>：旧值是 1，而敌人防御最多能到 3——也就是说在最深几层，
+     * 一次基础攻击被防御吃光后只能靠「至少 1 点」的兜底打出 1 点，防御、武器系数、
+     * 伤害加成全部失去意义（首领也只有几十点血，一局下来全是 1 和 2 的数字）。
+     * 现在基础攻击是 10，敌人生命同步上了一个量级（小怪几十、精英上百、首领数百），
+     * 防御回到「每次减免 1～3 点」的本意，也就是一次基础攻击的 10%～30%，
+     * 武器系数（0.45～1.60）与装备加成重新变成可读的百分比。
+     */
+    public static final int BASE_ATTACK_DAMAGE = 10;
 
     /**
      * 某界的基础单次攻击伤害（设计文档里的 {@code D光 / D影}）。

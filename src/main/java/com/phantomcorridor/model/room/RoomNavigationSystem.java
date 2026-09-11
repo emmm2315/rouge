@@ -7,12 +7,21 @@ import com.phantomcorridor.model.dungeon.DungeonMap;
 import com.phantomcorridor.model.entity.Player;
 import com.phantomcorridor.util.CollisionUtil;
 
+import java.util.List;
+
 /** 处理真实房间轮廓、障碍碰撞、安全切界、门禁与节点切换。 */
 public final class RoomNavigationSystem {
     private static final double EDGE_TOLERANCE = 4.0;
     private DungeonMap map;
     private Room currentRoom;
     private boolean roomChanged;
+    /**
+     * 临时阻挡地形（根冠古树的根篱）。
+     *
+     * <p>它们属于当前这一场战斗，不是房间几何：换房、换层、首领倒下都要清空，
+     * 所以单独放一份可变引用，由 {@code EnemySystem} 每帧推送，而不是塞进 {@link Room#walls()}。
+     */
+    private List<Wall> temporaryWalls = List.of();
 
     public void reset(DungeonMap map) {
         this.map = map;
@@ -20,7 +29,17 @@ public final class RoomNavigationSystem {
         this.currentRoom.visit();
         discoverNeighbors(currentRoom);
         this.roomChanged = false;
+        this.temporaryWalls = List.of();
     }
+
+    /** 更新当前生效的临时阻挡地形；传 {@code null} 等同于清空。 */
+    public void setTemporaryWalls(List<Wall> walls) {
+        this.temporaryWalls = walls == null || walls.isEmpty() ? List.of() : List.copyOf(walls);
+    }
+
+    public void clearTemporaryWalls() { this.temporaryWalls = List.of(); }
+
+    public List<Wall> getTemporaryWalls() { return temporaryWalls; }
 
     public void placeAtEntrance(Player player) {
         player.setPosition(centerX(currentRoom), centerY(currentRoom));
@@ -83,6 +102,10 @@ public final class RoomNavigationSystem {
     public boolean canOccupy(double x, double y, double radius, WorldType world) {
         if (!insideRoomShape(x, y, radius)) return false;
         for (Wall wall : currentRoom.walls()) {
+            if (wall.activeIn(world) && CollisionUtil.circleIntersectsRect(
+                    x, y, radius, wall.x(), wall.y(), wall.width(), wall.height())) return false;
+        }
+        for (Wall wall : temporaryWalls) {
             if (wall.activeIn(world) && CollisionUtil.circleIntersectsRect(
                     x, y, radius, wall.x(), wall.y(), wall.width(), wall.height())) return false;
         }
@@ -183,6 +206,8 @@ public final class RoomNavigationSystem {
         currentRoom.visit();
         discoverNeighbors(currentRoom);
         roomChanged = true;
+        // 临时阻挡地形属于上一场战斗：换房之后立刻失效，免得玩家被留在原地的根篱隔在门外。
+        temporaryWalls = List.of();
         double inset = GameConfig.PLAYER_RADIUS + 12.0;
         switch (direction) {
             case NORTH -> player.setPosition(currentRoom.doorCenter(Direction.SOUTH), currentRoom.maxY() - inset);

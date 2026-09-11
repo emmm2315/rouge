@@ -19,6 +19,8 @@ import com.phantomcorridor.model.combat.EnemyVisualEffect;
 // import com.phantomcorridor.model.combat.EnemyProjectile;
 import com.phantomcorridor.model.combat.SummonRift;
 import com.phantomcorridor.model.combat.EnemySystem;
+import com.phantomcorridor.model.combat.EnemyTelegraph;
+import com.phantomcorridor.model.combat.RootWall;
 import com.phantomcorridor.model.entity.Enemy;
 import com.phantomcorridor.model.entity.EnemyKind;
 import com.phantomcorridor.model.room.Direction;
@@ -126,6 +128,9 @@ public final class GameRenderer {
         drawRoom(g, session, light);
         drawPhaseWalls(g, session);
         drawBlinkFlash(g, session);
+        // 地面层：根篱与敌方预警都画在地板上、角色之下，玩家的脚不会被盖住。
+        drawRootWalls(g, session, player.getCurrentWorld());
+        drawEnemyTelegraphs(g, session, player.getCurrentWorld());
         drawSummonRifts(g, session, player.getCurrentWorld());
         drawEnemies(g, session, player.getCurrentWorld());
         drawEnemyAttacks(g, session, player.getCurrentWorld());
@@ -256,7 +261,7 @@ public final class GameRenderer {
                 g.drawImage(telegraph, rift.x() - size / 2.0, rift.y() - size / 2.0, size, size);
                 g.restore();
             }
-            drawMonsterEffect(g, EnemyKind.WATCHER, rift.world(), "summon_portal", rift.x(), rift.y(),
+            drawMonsterEffect(g, rift.summoner(), rift.world(), "summon_portal", rift.x(), rift.y(),
                     0.0, 120.0 + 110.0 * progress, rift.age(), rift.duration());
             // 预警素材那 4 帧只是把 r=100/128 的圈逐渐点亮、加粗，本身不会收缩；
             // 这里再补一道从预警圈收拢到孔隙的环，让“还要多久出怪”一眼可见。
@@ -269,15 +274,21 @@ public final class GameRenderer {
         }
     }
 
-    /** 几何预警图：4 帧、256×256、锚点在正中（见 enemies/telegraphs.json）。 */
+    /** 几何预警图：旧包 4 帧、新包 1 帧（512×512，锚点在正中）。 */
     private static Image[] telegraphFrames(String form, String shape) {
         String key = "telegraphs/" + form + "/" + shape;
         Image[] cached = MONSTER_FRAME_SETS.get(key);
         if (cached != null) return cached;
         List<Image> frames = new ArrayList<>();
         for (int i = 1; i <= 4; i++) {
-            var resource = GameRenderer.class.getResource("/com/phantomcorridor/enemies/telegraphs/" + form
-                    + "/" + shape + "/" + String.format("%02d", i) + ".png");
+            // v2 扩展包的模板放在 sprites/monsters/telegraphs 下，旧包仍在 enemies/telegraphs；
+            // 两个根目录都找一遍，旧包资产不必搬家。
+            var resource = GameRenderer.class.getResource("/com/phantomcorridor/sprites/monsters/telegraphs/"
+                    + form + "/" + shape + "/" + String.format("%02d", i) + ".png");
+            if (resource == null) {
+                resource = GameRenderer.class.getResource("/com/phantomcorridor/enemies/telegraphs/" + form
+                        + "/" + shape + "/" + String.format("%02d", i) + ".png");
+            }
             if (resource == null) break;
             frames.add(new Image(resource.toExternalForm(), false));
         }
@@ -291,13 +302,9 @@ public final class GameRenderer {
         List<Enemy> visible = session.getEnemies().getEnemies().stream()
                 .filter(enemy -> enemy.getWorld() == currentWorld).sorted(Comparator.comparingDouble(Enemy::getY)).toList();
         for (Enemy enemy : visible) {
-            String world = enemy.getWorld() == WorldType.LIGHT ? "light" : "shadow";
-            Image[] frames = monsterFrames("enemies/" + enemy.getKind().assetId() + "/" + world + "/"
-                    + enemy.getAnimationAction() + "/" + enemy.getFacing());
-            if (frames.length == 0) frames = monsterFrames("enemies/" + enemy.getKind().assetId() + "/" + world + "/idle/" + enemy.getFacing());
-            if (frames.length == 0) frames = monsterFrames("enemies/" + enemy.getKind().assetId() + "/" + world + "/idle/front");
+            Image[] frames = enemyFrames(enemy, currentWorld == WorldType.LIGHT ? "light" : "shadow");
             Image body = animationFrame(frames, enemy.getAnimationTime(), enemy.getAnimationDuration(), enemy.isAnimationLooping(), 6.0);
-            double size = enemy.isBoss() ? 323 : enemy.getKind().elite() ? 230 : 179;
+            double size = displayWidth(enemy.getKind());
             double x = Math.rint(enemy.getX() - size / 2.0);
             if (body != null) {
                 double height = size * body.getHeight() / Math.max(1.0, body.getWidth());
@@ -312,14 +319,212 @@ public final class GameRenderer {
         }
     }
 
+    /**
+     * 敌人本体帧的查找顺序。
+     *
+     * <p>v2 扩展包只画了右向三分之四视角并镜像出左向，没有独立的正面与背面，
+     * 所以朝向帧缺失时要退到本界的左右向帧，而不是留下一块空白或色块——
+     * 同时 {@code Enemy.setFacingFromVector} 已经不会把这些物种切到 front/back。
+     */
+    private static Image[] enemyFrames(Enemy enemy, String form) {
+        String base = "enemies/" + enemy.getKind().assetId() + "/" + form + "/";
+        Image[] frames = monsterFrames(base + enemy.getAnimationAction() + "/" + enemy.getFacing());
+        if (frames.length == 0) frames = monsterFrames(base + "idle/" + enemy.getFacing());
+        if (frames.length == 0) frames = monsterFrames(base + enemy.getAnimationAction() + "/right");
+        if (frames.length == 0) frames = monsterFrames(base + "idle/right");
+        if (frames.length == 0) frames = monsterFrames(base + "idle/left");
+        return frames;
+    }
+
+    /** 物种本体的显示宽度：画布边长 × 统一缩放刻度（v1 与 v2 两套素材同一把尺子）。 */
+    private static double displayWidth(EnemyKind kind) {
+        return kind.canvasSize() * GameConfig.MONSTER_RENDER_SCALE;
+    }
+
     private void drawEnemyHealth(GraphicsContext g, Enemy enemy, Color domain) {
         double width = enemy.isBoss() ? 126 : 58;
         double x = enemy.getX() - width / 2.0;
-        double y = enemy.getY() - (enemy.isBoss() ? 168 : enemy.getKind().elite() ? 124 : 96);
+        // 血条贴模型头顶：用物种的实测身高而不是画布高度，树冠与镰臂的留白不会把血条顶飞。
+        double y = enemy.getY() - enemy.getKind().overheadHeight() - 10.0;
         g.setFill(Color.rgb(0, 0, 0, 0.68));
         g.fillRect(x, y, width, 6);
         g.setFill(Color.color(domain.getRed(), domain.getGreen(), domain.getBlue(), 0.92));
         g.fillRect(x + 1, y + 1, (width - 2) * enemy.getHp() / enemy.getMaxHp(), 4);
+    }
+
+    /**
+     * 敌方预警层：v2 扩展包的扇面、安全楔、环带缺口、横带与地面标记都画在这里。
+     *
+     * <p>几何一律按技能参数现画，而不是把素材包里的通用模板当成判定范围——素材包文档也明确要求
+     * 「实际缺口角度、标记数量、位置和宽度应按技能参数绘制」。假的圆圈另用虚线空心，
+     * 所以术士的三镜校时在灰度下同样能分辨真假。
+     */
+    private void drawEnemyTelegraphs(GraphicsContext g, GameSession session, WorldType currentWorld) {
+        List<EnemyTelegraph> telegraphs = session.getEnemies().getTelegraphs();
+        if (telegraphs.isEmpty()) return;
+        Color base = currentWorld == WorldType.LIGHT ? LIGHT_GOLD : SHADOW_VIOLET;
+        for (EnemyTelegraph telegraph : telegraphs) {
+            if (telegraph.world() != currentWorld || !telegraph.isVisible()) continue;
+            double progress = telegraph.progress();
+            double alpha;
+            if (telegraph.isTriggered()) {
+                // 判定之后的残留：爆开的一瞬最亮，然后淡出。
+                alpha = Math.max(0.0, 0.70 * (1.0 - telegraph.residualProgress()));
+            } else {
+                alpha = telegraph.isFake() ? 0.18 + 0.10 * progress : 0.14 + 0.28 * progress;
+            }
+            drawTelegraph(g, telegraph, base, alpha);
+        }
+    }
+
+    /** 按形状画一道预警：填充随倒计时变浓，边缘始终清晰。 */
+    private void drawTelegraph(GraphicsContext g, EnemyTelegraph telegraph, Color base, double alpha) {
+        Color fill = Color.color(base.getRed(), base.getGreen(), base.getBlue(), Math.min(0.85, alpha));
+        g.save();
+        if (telegraph.isFake()) {
+            // 假圈：只有虚线空心，永远不填充——「实线齿边是真、虚线是假」。
+            g.setLineDashes(10.0, 8.0);
+            g.setStroke(Color.color(base.getRed(), base.getGreen(), base.getBlue(), Math.min(0.9, alpha + 0.30)));
+            g.setLineWidth(2.0);
+        } else {
+            g.setStroke(Color.color(1.0, 1.0, 1.0, Math.min(0.95, alpha + 0.18)));
+            g.setLineWidth(1.8);
+        }
+        switch (telegraph.shape()) {
+            case CIRCLE -> {
+                double r = telegraph.radius();
+                if (!telegraph.isFake()) g.setFill(fill);
+                if (!telegraph.isFake()) g.fillOval(telegraph.x() - r, telegraph.y() - r, r * 2, r * 2);
+                else g.strokeOval(telegraph.x() - r, telegraph.y() - r, r * 2, r * 2);
+                if (!telegraph.isFake()) g.strokeOval(telegraph.x() - r, telegraph.y() - r, r * 2, r * 2);
+                // 中心十字：地面标记要能看清落点，而不是一团糊在地上的色块。
+                g.strokeLine(telegraph.x() - 8, telegraph.y(), telegraph.x() + 8, telegraph.y());
+                g.strokeLine(telegraph.x(), telegraph.y() - 8, telegraph.x(), telegraph.y() + 8);
+            }
+            case SECTOR -> {
+                wedge(g, telegraph.x(), telegraph.y(), telegraph.radius(),
+                        telegraph.angleRadians(), telegraph.angleDegrees(), fill, telegraph.isFake());
+            }
+            case SECTOR_SPLIT -> {
+                double gapHalf = Math.toRadians(telegraph.safeGapDegrees() / 2.0);
+                double sideHalf = Math.toRadians(telegraph.angleDegrees() / 2.0);
+                for (int side = -1; side <= 1; side += 2) {
+                    wedge(g, telegraph.x(), telegraph.y(), telegraph.radius(),
+                            telegraph.angleRadians() + side * (gapHalf + sideHalf),
+                            telegraph.angleDegrees(), fill, telegraph.isFake());
+                }
+            }
+            case LINE -> {
+                g.save();
+                g.translate(telegraph.x(), telegraph.y());
+                g.rotate(Math.toDegrees(telegraph.angleRadians()));
+                if (!telegraph.isFake()) {
+                    g.setFill(fill);
+                    g.fillRect(0, -telegraph.width() / 2.0, telegraph.length(), telegraph.width());
+                }
+                g.strokeRect(0, -telegraph.width() / 2.0, telegraph.length(), telegraph.width());
+                // 分段标记：根刺是三根、封线是三段，玩家要能看出这一招铺了几节。
+                for (int i = 1; i < telegraph.segments(); i++) {
+                    double x = telegraph.length() * i / telegraph.segments();
+                    g.strokeLine(x, -telegraph.width() / 2.0, x, telegraph.width() / 2.0);
+                }
+                g.restore();
+            }
+            case RING_GAP -> {
+                double radius = (telegraph.innerRadius() + telegraph.outerRadius()) / 2.0;
+                double thickness = Math.max(6.0, telegraph.outerRadius() - telegraph.innerRadius());
+                g.setLineWidth(thickness);
+                g.setStroke(Color.color(base.getRed(), base.getGreen(), base.getBlue(), Math.min(0.8, alpha + 0.10)));
+                // 缺口朝向 angleRadians：环上留的“门”必须真的走得出去。
+                double startDeg = -Math.toDegrees(telegraph.angleRadians() + Math.toRadians(telegraph.safeGapDegrees() / 2.0));
+                g.strokeArc(telegraph.x() - radius, telegraph.y() - radius, radius * 2, radius * 2,
+                        startDeg, 360.0 - telegraph.safeGapDegrees(), ArcType.OPEN);
+            }
+            case BAND -> {
+                g.save();
+                g.translate(telegraph.x(), telegraph.y());
+                g.rotate(Math.toDegrees(telegraph.angleRadians()));
+                double half = telegraph.bandLength() / 2.0;
+                double gapHalf = telegraph.safeGap() / 2.0;
+                double near = Math.max(-half, telegraph.gapOffset() - gapHalf);
+                double far = Math.min(half, telegraph.gapOffset() + gapHalf);
+                if (!telegraph.isFake()) g.setFill(fill);
+                drawBandPiece(g, -half, near, telegraph.width(), telegraph.isFake());
+                drawBandPiece(g, far, half, telegraph.width(), telegraph.isFake());
+                g.restore();
+            }
+        }
+        g.restore();
+    }
+
+    /** 横带的一段：以带子自身为轴（x 是厚度方向、y 是长度方向）。 */
+    private static void drawBandPiece(GraphicsContext g, double from, double to, double thickness, boolean outlineOnly) {
+        double length = to - from;
+        if (length <= 1.0) return;
+        if (outlineOnly) g.strokeRect(-thickness / 2.0, from, thickness, length);
+        else {
+            g.fillRect(-thickness / 2.0, from, thickness, length);
+            g.strokeRect(-thickness / 2.0, from, thickness, length);
+        }
+    }
+
+    /**
+     * 一块扇形预警。
+     *
+     * <p>角度换算要注意坐标系：模型用 {@code atan2(dy, dx)}（y 向下），而 Canvas 的
+     * {@code arc()} 角度以 3 点钟为 0、逆时针为正（屏幕上表现为向上为正），两者符号相反。
+     */
+    private static void wedge(GraphicsContext g, double cx, double cy, double radius,
+                              double centreRadians, double degrees, Color fill, boolean outlineOnly) {
+        double half = Math.toRadians(degrees / 2.0);
+        double startDeg = -Math.toDegrees(centreRadians + half);
+        g.beginPath();
+        g.moveTo(cx, cy);
+        g.arc(cx, cy, radius, radius, startDeg, degrees);
+        g.closePath();
+        if (!outlineOnly) {
+            g.setFill(fill);
+            g.fill();
+        }
+        g.stroke();
+    }
+
+    /**
+     * 根冠古树的根篱：只阻挡、不伤害的临时地形。
+     *
+     * <p>可达性校验失败的根篱是「装饰性」的，用虚线描边标出来——玩家如果看到实线根篱挡路、
+     * 却发现能穿过去，会以为碰撞坏了；虚线与实线的区别正好说明「这道不管用」。
+     */
+    private void drawRootWalls(GraphicsContext g, GameSession session, WorldType currentWorld) {
+        List<RootWall> walls = session.getEnemies().getRootWalls();
+        if (walls.isEmpty()) return;
+        Color bark = currentWorld == WorldType.LIGHT ? Color.web("#7a6a35") : Color.web("#4a3260");
+        Color rim = currentWorld == WorldType.LIGHT ? Color.web("#d8c07a") : Color.web("#b98bff");
+        for (RootWall wall : walls) {
+            if (wall.world() != currentWorld) continue;
+            double progress = wall.progress();
+            // 前 1/4 时长出来、最后 1/5 时塌回去：地形招也要有起手与收招。
+            double grow = Math.min(1.0, progress * 4.0);
+            double fade = progress > 0.8 ? Math.max(0.0, (1.0 - progress) / 0.2) : 1.0;
+            if (grow <= 0.0 || fade <= 0.0) continue;
+            double height = wall.height() * grow;
+            double width = wall.width() * grow;
+            double x = wall.x() + (wall.width() - width) / 2.0;
+            double y = wall.y() + (wall.height() - height) / 2.0;
+            g.save();
+            g.setGlobalAlpha(fade);
+            g.setFill(Color.color(bark.getRed(), bark.getGreen(), bark.getBlue(), 0.88));
+            g.fillRoundRect(x, y, width, height, 8, 8);
+            g.setStroke(Color.color(rim.getRed(), rim.getGreen(), rim.getBlue(), 0.85));
+            g.setLineWidth(1.6);
+            if (wall.blocking()) {
+                g.strokeRoundRect(x, y, width, height, 8, 8);
+            } else {
+                g.setLineDashes(8.0, 6.0);
+                g.strokeRoundRect(x, y, width, height, 8, 8);
+            }
+            g.restore();
+        }
     }
 
     private void drawEnemyAttacks(GraphicsContext g, GameSession session, WorldType currentWorld) {
@@ -683,6 +888,15 @@ public final class GameRenderer {
             case EXECUTIONER -> 184;
             case BELL -> 122;
             case WATCHER -> attack.getEffectId().equals("rift_spear") ? 210 : 134;
+            // v2 弹体：孢子与晶羽是小团小片，炮弹与丝梭要大一圈才读得出方向。
+            case SPORE -> 116;
+            case RAYBAT -> 104;
+            case BEETLE -> 110;
+            case PRISM_CRAB -> attack.getEffectId().equals("prism_shell") ? 168 : 118;
+            case MANTIS -> 124;
+            case WEAVER -> 118;
+            case ROOTKING -> 112;
+            case HOURGLASS -> 140;
             default -> Math.max(120, attack.getRadius() * 6.0);
         };
     }
@@ -690,12 +904,33 @@ public final class GameRenderer {
     /** 敌人死亡后实体可立即退出战斗逻辑，尸体仍以本体 death 帧完成一次播放。 */
     private void drawMonsterBodyEffect(GraphicsContext g, EnemyVisualEffect effect) {
         String form = effect.world() == WorldType.LIGHT ? "light" : "shadow";
-        Image sprite = animationFrame(monsterFrames("enemies/" + effect.source().assetId() + "/" + form + "/"
-                        + effect.effectId() + "/" + effect.facing()), effect.age(), effect.duration(), false, 6.0);
+        Image[] frames = monsterFrames("enemies/" + effect.source().assetId() + "/" + form + "/"
+                + effect.effectId() + "/" + effect.facing());
+        if (frames.length == 0) {
+            frames = monsterFrames("enemies/" + effect.source().assetId() + "/" + form + "/"
+                    + effect.effectId() + "/right");
+        }
+        Image sprite = animationFrame(frames, effect.age(), effect.duration(), false, 6.0);
         if (sprite == null) return;
         double height = effect.size() * sprite.getHeight() / Math.max(1.0, sprite.getWidth());
-        g.drawImage(sprite, Math.rint(effect.x() - effect.size() / 2.0), Math.rint(effect.y() - height * .875),
-                effect.size(), height);
+        double left = Math.rint(effect.x() - effect.size() / 2.0);
+        double top = Math.rint(effect.y() - height * .875);
+        if (!effect.isGhost()) {
+            g.drawImage(sprite, left, top, effect.size(), height);
+            return;
+        }
+        // 幻象：半透明本体 + 空心虚线描边。玩家要能一眼看出「这一幅不是真的」，
+        // 而不是打上去才发现不掉血。
+        g.save();
+        g.setGlobalAlpha(0.42);
+        g.drawImage(sprite, left, top, effect.size(), height);
+        g.restore();
+        g.save();
+        g.setStroke(Color.color(0.86, 0.94, 1.0, 0.55));
+        g.setLineWidth(1.4);
+        g.setLineDashes(6.0, 5.0);
+        g.strokeRoundRect(left + 4, top + 4, effect.size() - 8, height - 8, 12, 12);
+        g.restore();
     }
 
     private void drawDeathButton(GraphicsContext g, GameSession session, double x, double y,
@@ -1761,10 +1996,42 @@ public final class GameRenderer {
 
         drawWorldBadge(g, domain, light);
         drawEquipmentBar(g, session);
+        drawBossBanner(g, session);
 
         g.setFill(Color.rgb(230, 220, 235, 0.28));
         g.setFont(Font.font("Consolas", 11));
         g.fillText(String.format("%.0f FPS", fps), AppConfig.VIEW_WIDTH - 150, 40);
+    }
+
+    /**
+     * Boss 名与专属血条。
+     *
+     * <p>一层一个不同的首领之后，「我在打谁」必须一眼看得出来：名字 + 一条不受小怪干扰的长血条，
+     * 直接挂在屏幕顶端。
+     */
+    private void drawBossBanner(GraphicsContext g, GameSession session) {
+        Enemy boss = session.getBoss();
+        if (boss == null) return;
+        boolean light = boss.getWorld() == WorldType.LIGHT;
+        Color domain = light ? LIGHT_GOLD : SHADOW_VIOLET;
+        double width = 420.0;
+        double x = (AppConfig.VIEW_WIDTH - width) / 2.0;
+        double y = 26.0;
+        g.setFill(Color.rgb(4, 4, 8, 0.78));
+        g.fillRoundRect(x - 10, y - 18, width + 20, 44, 10, 10);
+        g.setStroke(Color.color(domain.getRed(), domain.getGreen(), domain.getBlue(), 0.7));
+        g.setLineWidth(1.4);
+        g.strokeRoundRect(x - 10, y - 18, width + 20, 44, 10, 10);
+        g.setTextAlign(TextAlignment.CENTER);
+        g.setFill(Color.web("#fdf6e9"));
+        g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 15));
+        g.fillText(boss.getKind().displayName() + (light ? "　·　光形态" : "　·　影形态"), x + width / 2.0, y + 2);
+        g.setTextAlign(TextAlignment.LEFT);
+        g.setFill(Color.rgb(255, 255, 255, 0.14));
+        g.fillRoundRect(x, y + 8, width, 8, 4, 4);
+        double ratio = boss.getMaxHp() <= 0 ? 0.0 : boss.getHp() / (double) boss.getMaxHp();
+        g.setFill(domain);
+        g.fillRoundRect(x, y + 8, width * ratio, 8, 4, 4);
     }
 
     /** 右上角的光/影徽章：缩小后给小地图让出了纵向空间。 */

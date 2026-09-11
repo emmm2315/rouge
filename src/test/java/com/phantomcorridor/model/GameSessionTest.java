@@ -241,8 +241,8 @@ class GameSessionTest {
         var boss = session.getEnemies().getEnemies().getFirst();
         assertTrue(boss.isBoss());
         assertEquals(2, session.getFloor());
-        assertTrue(boss.getMaxHp() > EnemyKind.WATCHER.hitPoints(),
-                "第二层的首领生命值应当高于基础值，实际 " + boss.getMaxHp());
+        assertTrue(boss.getMaxHp() > boss.getKind().hitPoints(),
+                "第二层的首领生命值应当高于它的基础值，实际 " + boss.getMaxHp());
         assertTrue(boss.getDefense() > 0, "第二层的敌人应当有防御");
     }
 
@@ -257,7 +257,8 @@ class GameSessionTest {
 
     private static void defeatTheBoss(GameSession session) {
         assertFalse(session.getEnemies().getEnemies().isEmpty(), "首领房应当有首领");
-        for (Enemy enemy : new ArrayList<>(session.getEnemies().getEnemies())) enemy.damage(999);
+        // 用「当前生命上限」而不是写死的数字：首领生命随层数与难度增长，写死会在高层打不死。
+        for (Enemy enemy : new ArrayList<>(session.getEnemies().getEnemies())) enemy.damage(enemy.getMaxHp());
         for (int frame = 0; frame < 5; frame++) update(session);
         assertTrue(session.getNavigation().getCurrentRoom().isCleared(), "首领清空后房间应当标记为已清空");
     }
