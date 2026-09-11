@@ -162,13 +162,25 @@ public final class GameSession {
             interactRequested = false;
             interact(current);
         }
-        player.restorePhaseEnergy(GameConfig.PHASE_ENERGY_REGEN_PER_SEC * dt);
+        player.restorePhaseEnergy(phaseEnergyRegenRate() * dt);
         player.updateAttackCharges(dt);
         if (attacking) {
             attackSystem.tryAttack(player, aimX, aimY);
         }
         player.updateAnimation(dt, movementX, movementY, attacking,
                 phasePulseVisibleRemaining > 0.0);
+    }
+
+    /**
+     * 相位能量自然回复速率（点/秒）。
+     *
+     * <p>当前世界已经没有活着的敌人时按倍率翻倍：玩家不小心切到一个没敌人的世界，
+     * 只能干等相位能量回满，这里把这段白等缩短一半。
+     */
+    private double phaseEnergyRegenRate() {
+        double multiplier = enemies.getCount(player.getCurrentWorld()) == 0
+                ? GameConfig.PHASE_ENERGY_EMPTY_WORLD_REGEN_MULTIPLIER : 1.0;
+        return GameConfig.PHASE_ENERGY_REGEN_PER_SEC * multiplier;
     }
 
     public boolean tryShiftWorld() {
@@ -179,6 +191,8 @@ public final class GameSession {
         if (safePosition == null) return false;
         if (!worldShift.tryShift(player)) return false;
         player.setPosition(safePosition[0], safePosition[1]);
+        // 切界后给攻击充能一个短时加速：玩家常在没充能时切界回能，这里缩短那段空窗。
+        player.boostAttackChargeRecovery(GameConfig.WORLD_SWITCH_CHARGE_BOOST_DURATION);
         if (worldShift.consumePulse()) {
             enemyProjectiles.clearWithin(player.getX(), player.getY(), GameConfig.PHASE_PULSE_RADIUS);
             phasePulseVisibleRemaining = GameConfig.PHASE_PULSE_VISIBLE_TIME;

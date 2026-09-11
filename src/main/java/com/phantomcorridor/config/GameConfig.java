@@ -345,6 +345,26 @@ public final class GameConfig {
     /** 切界脉冲圆环的显示时间。 */
     public static final double PHASE_PULSE_VISIBLE_TIME = 0.32;
 
+    // ---- 切界后的短时强化（§2.1 相位切换） ----
+    /**
+     * 切界后攻击充能（蓝条）恢复速度翻倍的持续时间（秒）。
+     *
+     * <p>切界会清空相位能量，玩家常常在没攻击充能时急着切界回能；给攻击充能一个短暂的
+     * 双倍回复，让这段「切界等回能」的空窗也能更快攒出下一波攻击。
+     */
+    public static final double WORLD_SWITCH_CHARGE_BOOST_DURATION = 2.0;
+
+    /** 切界后攻击充能恢复速度的倍率（恢复速度翻倍）。 */
+    public static final double WORLD_SWITCH_CHARGE_BOOST_MULTIPLIER = 2.0;
+
+    /**
+     * 当前世界没有检测到敌人时，相位能量恢复速度的倍率。
+     *
+     * <p>玩家不小心切到一个已经没有敌人的世界后，只能干等相位能量自然回满；
+     * 没有敌人时把回能速度翻倍，缩短这段白等的时间。
+     */
+    public static final double PHASE_ENERGY_EMPTY_WORLD_REGEN_MULTIPLIER = 2.0;
+
     // ---- 第 8 天：五层推进 ----
     /** 一局的总层数：打通最后一层的首领并走进传送门即通关。 */
     public static final int TOTAL_FLOORS = 5;
