@@ -73,6 +73,8 @@ public final class EnemySystem {
     private int summonCallsSinceLastRead;
     private int floor = 1;
     private Difficulty difficulty = Difficulty.NORMAL;
+    /** 当前房间的导航系统（只读引用，用于视线判定；没有房间时为 null）。 */
+    private RoomNavigationSystem navigation;
     private BlinkFlash blinkFlash;
 
     /** 最近一次裂隙闪现的特效状态；已结束时返回 null。 */
@@ -154,6 +156,9 @@ public final class EnemySystem {
 
     public void update(double dt, Player player, PlayerAttackSystem playerAttacks,
                        RoomNavigationSystem navigation) {
+        // 玩家命中的结算要用导航系统做视线判定（弹射选目标、爆炸不隔墙），
+        // 顺便也让范围伤害与召唤等路径共用同一份引用。
+        this.navigation = navigation;
         updateBlinkFlash(dt);
         updateDamageFlashes(dt);
         resolvePlayerHits(player, playerAttacks);
@@ -375,42 +380,229 @@ public final class EnemySystem {
         return true;
     }
 
+    /**
+     * 结算玩家这一帧打出的全部伤害。
+     *
+     * <p>与旧实现的区别：伤害不再由「玩家攻击力」一个数决定，而是每个伤害包带自己的系数
+     * （见 {@link Projectile#getDamageCoefficient()}），于是三发散射、贯穿光矛的三段递减、
+     * 折镜弹射的三段、爆裂的 1.10 都能各自结算——设计文档明确要求「不先把多段合并再减防御」。
+     */
     private void resolvePlayerHits(Player player, PlayerAttackSystem playerAttacks) {
-        // 伤害统一走 Enemy.takeHit：先扣防御，并保证每次至少造成 1 点。
-        // 玩家伤害与敌人生命、防御共用同一个难度倍率，高难度下不会变成“同一个敌人多打一倍次数”。
-        int attackDamage = scaledPlayerDamage(player.getAttackDamage());
+        // 余震指环的强化标记：每第四轮攻击为 true，作用于本轮主攻击的**第一次命中**。
+        boolean empowered = isResonanceEmpowered(player, playerAttacks);
+
         for (Projectile projectile : playerAttacks.getProjectiles()) {
-            for (Enemy enemy : enemies) {
-                if (!enemy.isDead() && projectile.getWorld() == enemy.getWorld()
-                        && CollisionUtil.circleIntersectsCircle(projectile.getX(), projectile.getY(), projectile.getRadius(),
-                        enemy.getHitboxCenterX(), enemy.getHitboxCenterY(), enemy.getHitboxRadius())) {
-                    recordEnemyHit(enemy, enemy.takeHit(attackDamage));
-                    projectile.expire();
-                    break;
-                }
+            if (projectile.isExpired()) continue;
+            Enemy hit = firstEnemyHitBy(projectile);
+            if (hit == null) continue;
+            resolveProjectileHit(player, projectile, hit);
+            if (empowered) {
+                // 震波只认最先成立的一次命中；打出去之后本轮不再触发。
+                empowered = false;
+                spawnResonanceShockwave(player, hit.getHitboxCenterX(), hit.getHitboxCenterY(), false);
             }
         }
+
+        // 近战：按本轮方案的扇形与距离判定，环月镰是 360°、重剑是 40° 窄劈。
         if (player.getCurrentWorld() == WorldType.SHADOW && playerAttacks.isMeleeVisible()) {
             int attackId = playerAttacks.getMeleeAttackId();
             for (Enemy enemy : enemies) {
-                if (enemy.getWorld() != WorldType.SHADOW || enemy.getLastMeleeHitId() == attackId) continue;
-                if (Math.hypot(enemy.getHitboxCenterX() - player.getX(), enemy.getHitboxCenterY() - player.getY())
-                        <= GameConfig.SHADOW_MELEE_RANGE + enemy.getHitboxRadius()) {
-                    recordEnemyHit(enemy, enemy.takeHit(attackDamage));
+                if (enemy.getWorld() != WorldType.SHADOW || enemy.isDead()) continue;
+                if (enemy.getLastMeleeHitId() == attackId) continue;
+                if (!meleeCovers(player, playerAttacks, enemy)) continue;
+                int dealt = applyDamage(player, enemy, playerAttacks.getMeleeCoefficient());
+                if (dealt > 0) {
                     enemy.setLastMeleeHitId(attackId);
+                    if (empowered) {
+                        empowered = false;
+                        spawnResonanceShockwave(player, player.getX(), player.getY(), true);
+                    }
                 }
             }
         }
     }
 
+    /** 弹体命中的第一个合法敌人；穿透过的目标会被弹体自己记住，不会再中第二次。 */
+    private Enemy firstEnemyHitBy(Projectile projectile) {
+        for (Enemy enemy : enemies) {
+            if (enemy.isDead() || projectile.getWorld() != enemy.getWorld()) continue;
+            if (projectile.hasHit(enemy)) continue;
+            if (CollisionUtil.circleIntersectsCircle(projectile.getX(), projectile.getY(), projectile.getRadius(),
+                    enemy.getHitboxCenterX(), enemy.getHitboxCenterY(), enemy.getHitboxRadius())) {
+                return enemy;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 结算一次弹体命中，并按弹体的行为决定它接下来干什么。
+     *
+     * <p>五种行为对应设计文档里的五类武器：
+     * <ul>
+     *   <li>{@code VANILLA}：命中即消失（基础光弹、三叉杖每一发）；</li>
+     *   <li>{@code PIERCE}：贯日长矛，按 1.00/0.75/0.50 继续飞；</li>
+     *   <li>{@code BOUNCE}：折镜法球，在命中点 180 像素内挑下一个没打过的敌人；</li>
+     *   <li>{@code BURST}：炽核权杖，在落点半径 80 炸一次，光核自身不结算接触伤害；</li>
+     *   <li>{@code RETURN}：归影双刃，出程返程各结算一次（由 {@link Projectile} 自己管方向）。</li>
+     * </ul>
+     */
+    private void resolveProjectileHit(Player player, Projectile projectile, Enemy hit) {
+        if (projectile.getBehaviour() == Projectile.Behaviour.BURST) {
+            // 光核没有独立的接触伤害：直接命中的敌人也只吃一次爆炸。
+            explodeAt(player, projectile.getX(), projectile.getY(), projectile.getDamageCoefficient(),
+                    GameConfig.SOLAR_BURST_RADIUS, projectile.getWorld());
+            projectile.expire();
+            return;
+        }
+        int dealt = applyDamage(player, hit, projectile.getDamageCoefficient());
+        boolean continues = projectile.registerHit(hit);
+        if (dealt <= 0) return;
+
+        if (projectile.getBehaviour() == Projectile.Behaviour.BOUNCE && projectile.canBounce()) {
+            Enemy next = nearestUnhitEnemy(projectile, hit);
+            if (next == null) {
+                projectile.expire();
+                return;
+            }
+            double speed = Math.hypot(projectile.getVelocityX(), projectile.getVelocityY());
+            projectile.redirect(projectile.getX(), projectile.getY(),
+                    next.getHitboxCenterX() - projectile.getX(),
+                    next.getHitboxCenterY() - projectile.getY(),
+                    speed, GameConfig.MIRROR_ORB_BOUNCE_RADIUS / Math.max(1.0, speed));
+            return;
+        }
+        if (!continues) projectile.expire();
+    }
+
+    /** 弹射目标：命中点附近、同界、没被本弹体打过、且没有墙挡着的最近敌人。 */
+    private Enemy nearestUnhitEnemy(Projectile projectile, Enemy justHit) {
+        Enemy best = null;
+        double bestDistance = GameConfig.MIRROR_ORB_BOUNCE_RADIUS;
+        for (Enemy enemy : enemies) {
+            if (enemy.isDead() || enemy == justHit) continue;
+            if (enemy.getWorld() != projectile.getWorld() || projectile.hasHit(enemy)) continue;
+            double distance = Math.hypot(enemy.getHitboxCenterX() - projectile.getX(),
+                    enemy.getHitboxCenterY() - projectile.getY());
+            if (distance > bestDistance) continue;
+            if (!hasLineOfSight(projectile.getX(), projectile.getY(),
+                    enemy.getHitboxCenterX(), enemy.getHitboxCenterY(), projectile.getWorld())) continue;
+            // 距离相同时按稳定顺序（enemies 列表的生成顺序）取先遇到的那个。
+            if (distance < bestDistance || best == null) {
+                bestDistance = distance;
+                best = enemy;
+            }
+        }
+        return best;
+    }
+
+    /** 近战扇形判定：目标要在本轮距离内、且落在扇形角度里（360° 就是全天周）。 */
+    private static boolean meleeCovers(Player player, PlayerAttackSystem attacks, Enemy enemy) {
+        double dx = enemy.getHitboxCenterX() - player.getX();
+        double dy = enemy.getHitboxCenterY() - player.getY();
+        double distance = Math.hypot(dx, dy);
+        if (distance > attacks.getMeleeRange() + enemy.getHitboxRadius()) return false;
+        double arc = attacks.getMeleeArcDegrees();
+        if (arc >= 360.0) return true;
+        if (distance < 0.0001) return true;
+        double toEnemy = Math.atan2(dy, dx);
+        double half = Math.toRadians(arc / 2.0);
+        double delta = Math.atan2(Math.sin(toEnemy - attacks.getMeleeAngleRadians()),
+                Math.cos(toEnemy - attacks.getMeleeAngleRadians()));
+        return Math.abs(delta) <= half;
+    }
+
+    /**
+     * 对单个敌人结算一个伤害包。
+     *
+     * <p>伤害口径来自设计文档 §三：{@code 基础伤害 × 段系数 ×（1 + 同类加成之和)}，
+     * 再乘难度倍率，最后走 {@link Enemy#takeHit(int)} 的「先减防御、至少 1 点」规则。
+     * 基础伤害与加成都是小数，所以在进入整数结算边界之前不取整。
+     */
+    private int applyDamage(Player player, Enemy enemy, double coefficient) {
+        double raw = player.getCurrentBaseDamage()
+                * coefficient * player.damageMultiplier(enemy.getWorld())
+                * hunterBonus(player, enemy);
+        int dealt = enemy.takeHit(scaledPlayerDamage(raw));
+        if (dealt > 0) recordEnemyHit(enemy, dealt);
+        return dealt;
+    }
+
+    /**
+     * 猎影牙饰：目标生命比例**高于** 70% 时，影界伤害 +25%。
+     *
+     * <p>每个伤害包在结算前各自检查目标当前生命比例，所以第一段把敌人打到阈值以下之后，
+     * 第二段就不再享受加成（设计文档 §五-12）。
+     */
+    private static double hunterBonus(Player player, Enemy enemy) {
+        if (enemy.getWorld() != WorldType.SHADOW) return 1.0;
+        if (player.equipmentCount(com.phantomcorridor.model.EquipmentType.HUNTERS_FANG) == 0) return 1.0;
+        if (enemy.getMaxHp() <= 0) return 1.0;
+        double ratio = enemy.getHp() / (double) enemy.getMaxHp();
+        if (ratio <= GameConfig.HUNTERS_FANG_HP_THRESHOLD) return 1.0;
+        return 1.0 + GameConfig.HUNTERS_FANG_BONUS
+                * player.equipmentCount(com.phantomcorridor.model.EquipmentType.HUNTERS_FANG);
+    }
+
+    /** 本轮攻击是否吃余震指环的强化标记（每第 4 轮）。 */
+    private static boolean isResonanceEmpowered(Player player, PlayerAttackSystem attacks) {
+        if (player.equipmentCount(com.phantomcorridor.model.EquipmentType.RESONANCE_RING) == 0) return false;
+        return attacks.getWorldAttackCount() % GameConfig.RESONANCE_RING_INTERVAL == 0;
+    }
+
+    /**
+     * 余震指环的震波：光界在命中点炸半径 60 的金色震波，影界在出手位置炸 0.75 倍影斩距离的紫波。
+     *
+     * <p>震波不计新的攻击轮次、也不会再触发震波，所以这里直接结算范围伤害。
+     */
+    private void spawnResonanceShockwave(Player player, double x, double y, boolean shadow) {
+        double coefficient = shadow ? GameConfig.RESONANCE_RING_SHADOW_COEFFICIENT
+                : GameConfig.RESONANCE_RING_LIGHT_COEFFICIENT;
+        double radius = shadow
+                ? GameConfig.SHADOW_MELEE_RANGE * GameConfig.RESONANCE_RING_SHADOW_RANGE_SCALE
+                : GameConfig.RESONANCE_RING_LIGHT_RADIUS;
+        WorldType world = player.getCurrentWorld();
+        explodeAt(player, x, y, coefficient, radius, world);
+    }
+
+    /**
+     * 范围伤害：对半径内、同界、且从爆心看得见的敌人各结算一次。
+     *
+     * <p>视线检查是设计文档的硬要求——爆炸不能隔着墙输出（「以爆心做视线判定」）。
+     */
+    private void explodeAt(Player player, double x, double y, double coefficient,
+                           double radius, WorldType world) {
+        for (Enemy enemy : enemies) {
+            if (enemy.isDead() || enemy.getWorld() != world) continue;
+            double distance = Math.hypot(enemy.getHitboxCenterX() - x, enemy.getHitboxCenterY() - y);
+            if (distance > radius + enemy.getHitboxRadius()) continue;
+            if (!hasLineOfSight(x, y, enemy.getHitboxCenterX(), enemy.getHitboxCenterY(), world)) continue;
+            applyDamage(player, enemy, coefficient);
+        }
+    }
+
+    /** 两点之间在该世界里是否没有墙挡着（范围伤害与弹射都用它）。 */
+    private boolean hasLineOfSight(double fromX, double fromY, double toX, double toY, WorldType world) {
+        return navigation == null || navigation.isSegmentClear(fromX, fromY, toX, toY, 1.0, world);
+    }
+
     /**
      * 玩家一击打出的伤害（含难度倍率）。
+     *
+     * <p>参数是 {@code double}：武器系数（0.45、0.55、1.60……）本身就是小数，
+     * 在这里先取整会把三叉杖每发的 0.45 抹成 0，再被「至少 1 点」兜底成 1——
+     * 等于每发都按满伤害结算。所以只在真正落到敌人身上那一刻才整数化。
      *
      * <p>低难度下敌人生命只有一半，玩家伤害同步减半，双方比值不变；
      * 「简单」依然更简单，靠的是敌人总量与玩家容错，而不是把玩家也一起削。
      */
-    private int scaledPlayerDamage(int baseDamage) {
+    private int scaledPlayerDamage(double baseDamage) {
         return Math.max(1, (int) Math.round(baseDamage * difficulty.playerDamageMultiplier()));
+    }
+
+    /** 取当前房间的导航系统（范围伤害与弹射的视线判定要用它）。 */
+    public void setNavigation(RoomNavigationSystem navigation) {
+        this.navigation = navigation;
     }
 
     /**

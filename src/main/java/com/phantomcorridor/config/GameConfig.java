@@ -81,6 +81,32 @@ public final class GameConfig {
     public static final int SHADOW_ATTACK_CHARGE_COST = 1;
     public static final double ATTACK_CHARGE_RECOVERY_TIME = 1.35;
 
+    // ---- 装备专属效果（《新增 15 件装备与攻击特效设计》§五） ----
+    /** 相位陀螺：成功切界后的攻速窗口时长（秒）与间隔倍率。 */
+    public static final double PHASE_GYROSCOPE_WINDOW = 2.0;
+    /** 夜行披风：影界攻击释放后的加速时长（秒）与移速倍率。 */
+    public static final double NIGHTSTEP_CLOAK_DURATION = 0.45;
+    public static final double NIGHTSTEP_CLOAK_SPEED = 1.18;
+    /** 曜纹披肩：光界受击减伤比例与冷却（秒）。 */
+    public static final double SUNWEAVE_MANTLE_REDUCTION = 0.30;
+    public static final double SUNWEAVE_MANTLE_COOLDOWN = 6.0;
+    /** 猎影牙饰：目标生命比例高于该值时才增伤。 */
+    public static final double HUNTERS_FANG_HP_THRESHOLD = 0.70;
+    public static final double HUNTERS_FANG_BONUS = 0.25;
+    /** 余震指环：每第 N 轮攻击触发一次震波。 */
+    public static final int RESONANCE_RING_INTERVAL = 4;
+    public static final double RESONANCE_RING_LIGHT_RADIUS = 60.0;
+    public static final double RESONANCE_RING_LIGHT_COEFFICIENT = 0.30;
+    public static final double RESONANCE_RING_SHADOW_RANGE_SCALE = 0.75;
+    public static final double RESONANCE_RING_SHADOW_COEFFICIENT = 0.25;
+    /** 炽核权杖：爆裂半径与命中后的范围伤害系数。 */
+    public static final double SOLAR_BURST_RADIUS = 80.0;
+    /** 折镜法球：每次弹射的搜索半径与单段最大飞行距离。 */
+    public static final double MIRROR_ORB_BOUNCE_RADIUS = 180.0;
+    /** 归影双刃：往返的飞出行程时间（秒）与单段系数。 */
+    public static final double RETURNING_FANG_FLIGHT_TIME = 0.22;
+    public static final double RETURNING_FANG_COEFFICIENT = 0.55;
+
     // ---- 第 6 天：敌人与房间战斗 ----
     /** 普通战斗房的敌人数量（含可能替换其中一只的精英）。 */
     public static final int BATTLE_ENEMY_MIN = 5;

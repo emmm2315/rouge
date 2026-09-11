@@ -40,6 +40,8 @@ public final class GameSession {
     // private boolean combatActive;
     private boolean interactRequested;
     private boolean dashRequested;
+    /** 上一帧影斩的释放次数：用来在“这一刀刚落下”的那一帧触发夜行披风。 */
+    private int lastMeleeReleaseCount;
 
     public void newRun() { newRun(""); }
 
@@ -142,6 +144,11 @@ public final class GameSession {
         // 房间内容只在第一次进入时生成，进出不会重刷；这里只维护“待确认商品”的有效性。
         roomContent.update(navigation.getCurrentRoom(), player);
         attackSystem.update(dt, navigation);
+        // 影斩实际落下的那一刻才触发夜行披风：前摇中的那一刀不算，切界/卸下时它自己会失效。
+        if (attackSystem.getMeleeReleaseCount() != lastMeleeReleaseCount) {
+            lastMeleeReleaseCount = attackSystem.getMeleeReleaseCount();
+            player.onShadowAttackReleased();
+        }
         enemies.update(dt, player, attackSystem, navigation);
         applyHitKnockback();
         // 首领起手召唤时给一条即时提示：裂隙本身画在地上，但玩家常常正盯着首领看。
@@ -183,6 +190,8 @@ public final class GameSession {
             enemyProjectiles.clearWithin(player.getX(), player.getY(), GameConfig.PHASE_PULSE_RADIUS);
             phasePulseVisibleRemaining = GameConfig.PHASE_PULSE_VISIBLE_TIME;
         }
+        // 切界成功：打开相位陀螺的攻速窗口，并结束夜行披风的影界加速。
+        player.onWorldShifted();
         enemies.onWorldChanged(player.getCurrentWorld());
         return true;
     }

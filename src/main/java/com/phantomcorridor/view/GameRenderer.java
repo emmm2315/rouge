@@ -369,52 +369,17 @@ public final class GameRenderer {
     private void drawAttacks(GraphicsContext g, GameSession session, boolean light) {
         Player player = session.getPlayer();
         for (Projectile projectile : session.getAttackSystem().getProjectiles()) {
-            double radius = projectile.getRadius();
-            Image[] bullets = light ? LIGHT_BULLETS : SHADOW_BULLETS;
-            if (bullets.length > 0) {
-                Image bullet = bullets[0];
-                double size = Math.max(28.0, radius * 7.0);
-                double height = size * bullet.getHeight() / Math.max(1.0, bullet.getWidth());
-                boolean reverse = projectile.getVelocityX() < 0;
-                g.drawImage(bullet, reverse ? projectile.getX() + size / 2.0 : projectile.getX() - size / 2.0,
-                        projectile.getY() - height / 2.0, reverse ? -size : size, height);
-                continue;
+            // 弹体按方案分成四种形态：光核（慢速大团）、光矛（细长梭）、
+            // 影刃（旋刃）、基础光弹。外观必须跟得上模型，否则玩家看不出换了武器。
+            switch (projectile.getShape()) {
+                case CORE -> drawBurstCore(g, projectile);
+                case LANCE -> drawLightLance(g, projectile);
+                case FANG -> drawShadowFang(g, projectile);
+                case ORB -> drawLightOrb(g, projectile, light, session);
             }
-            g.setGlobalBlendMode(BlendMode.ADD);
-            g.setFill(Color.rgb(255, 220, 138, 0.30));
-            g.fillRect(projectile.getX() - radius * 2.5, projectile.getY() - radius * 2.5,
-                    radius * 5.0, radius * 5.0);
-            g.setGlobalBlendMode(BlendMode.SRC_OVER);
-            g.setFill(Color.web("#fff2bd"));
-            g.fillRect(projectile.getX() - radius, projectile.getY() - radius,
-                    radius * 2.0, radius * 2.0);
         }
         if (!light && session.getAttackSystem().isMeleeVisible()) {
-            Image[] slashes = SHADOW_SLASHES;
-            if (slashes.length > 0) {
-                Image slash = slashes[Math.min(slashes.length - 1,
-                        (int) (player.getAnimationTime() * 12.0) % slashes.length)];
-                double size = 160.0;
-                double angle = Math.toDegrees(Math.atan2(session.getAimY() - player.getY(), session.getAimX() - player.getX()));
-                g.save();
-                g.translate(player.getX(), player.getY());
-                g.rotate(angle);
-                g.drawImage(slash, -size / 2.0, -size * 0.5,
-                        size, size * slash.getHeight() / Math.max(1.0, slash.getWidth()));
-                g.restore();
-                return;
-            }
-            double angle = Math.toDegrees(session.getAttackSystem().getMeleeAngleRadians());
-            double arc = GameConfig.SHADOW_MELEE_ARC_DEGREES;
-            double range = GameConfig.SHADOW_MELEE_RANGE;
-            g.setStroke(Color.rgb(190, 132, 242, 0.82));
-            g.setLineWidth(10.0);
-            g.strokeArc(player.getX() - range, player.getY() - range, range * 2.0, range * 2.0,
-                    -angle - arc / 2.0, arc, javafx.scene.shape.ArcType.OPEN);
-            g.setStroke(Color.rgb(239, 216, 255, 0.86));
-            g.setLineWidth(2.0);
-            g.strokeArc(player.getX() - range, player.getY() - range, range * 2.0, range * 2.0,
-                    -angle - arc / 2.0, arc, javafx.scene.shape.ArcType.OPEN);
+            drawMeleeArc(g, session, player);
         }
         if (player.getAnimationState() == PlayerAnimationState.SHIFTING) {
             Image[] aura = light ? LIGHT_AURA : SHADOW_AURA;
@@ -428,6 +393,127 @@ public final class GameRenderer {
                 g.setGlobalBlendMode(BlendMode.SRC_OVER);
             }
         }
+    }
+
+    /** 基础光弹与三叉杖的每一发：旧的子弹贴图，尺寸跟着半径走。 */
+    private void drawLightOrb(GraphicsContext g, Projectile projectile, boolean light, GameSession session) {
+        double radius = projectile.getRadius();
+        Image[] bullets = light ? LIGHT_BULLETS : SHADOW_BULLETS;
+        if (bullets.length > 0) {
+            Image bullet = bullets[0];
+            double size = Math.max(28.0, radius * 7.0);
+            double height = size * bullet.getHeight() / Math.max(1.0, bullet.getWidth());
+            boolean reverse = projectile.getVelocityX() < 0;
+            g.drawImage(bullet, reverse ? projectile.getX() + size / 2.0 : projectile.getX() - size / 2.0,
+                    projectile.getY() - height / 2.0, reverse ? -size : size, height);
+            return;
+        }
+        g.setGlobalBlendMode(BlendMode.ADD);
+        g.setFill(Color.rgb(255, 220, 138, 0.30));
+        g.fillRect(projectile.getX() - radius * 2.5, projectile.getY() - radius * 2.5,
+                radius * 5.0, radius * 5.0);
+        g.setGlobalBlendMode(BlendMode.SRC_OVER);
+        g.setFill(Color.web("#fff2bd"));
+        g.fillRect(projectile.getX() - radius, projectile.getY() - radius,
+                radius * 2.0, radius * 2.0);
+    }
+
+    /**
+     * 贯日长杖的细长光矛：沿飞行方向拉长的金色光梭。
+     *
+     * <p>「尾光不增加碰撞宽度」——所以这里只把**视觉**拉长，命中半径仍然用模型给的细半径。
+     */
+    private void drawLightLance(GraphicsContext g, Projectile projectile) {
+        double angle = Math.toDegrees(Math.atan2(projectile.getVelocityY(), projectile.getVelocityX()));
+        double length = 54.0;
+        double width = Math.max(6.0, projectile.getRadius() * 2.0);
+        g.save();
+        g.translate(projectile.getX(), projectile.getY());
+        g.rotate(angle);
+        g.setGlobalBlendMode(BlendMode.ADD);
+        g.setFill(Color.rgb(255, 226, 150, 0.34));
+        g.fillRoundRect(-length, -width, length * 2, width * 2, width, width);
+        g.setGlobalBlendMode(BlendMode.SRC_OVER);
+        g.setFill(Color.web("#fff6cf"));
+        g.fillRoundRect(-length * 0.7, -width / 2.0, length * 1.4, width, width / 2.0, width / 2.0);
+        g.setFill(Color.web("#ffffff"));
+        g.fillRoundRect(length * 0.2, -width / 3.0, length * 0.5, width * 0.66, width / 3.0, width / 3.0);
+        g.restore();
+    }
+
+    /** 炽核权杖的慢速光核：闭合日轮裹着橙金核心。 */
+    private void drawBurstCore(GraphicsContext g, Projectile projectile) {
+        double radius = projectile.getRadius();
+        double pulse = 1.0 + Math.sin(projectile.getRemainingLifetime() * 18.0) * 0.08;
+        g.setGlobalBlendMode(BlendMode.ADD);
+        g.setFill(Color.rgb(255, 176, 88, 0.26));
+        g.fillOval(projectile.getX() - radius * 3.0 * pulse, projectile.getY() - radius * 3.0 * pulse,
+                radius * 6.0 * pulse, radius * 6.0 * pulse);
+        g.setGlobalBlendMode(BlendMode.SRC_OVER);
+        g.setStroke(Color.web("#ffb45c"));
+        g.setLineWidth(2.5);
+        g.strokeOval(projectile.getX() - radius * 1.7, projectile.getY() - radius * 1.7,
+                radius * 3.4, radius * 3.4);
+        g.setFill(Color.web("#ffd489"));
+        g.fillOval(projectile.getX() - radius, projectile.getY() - radius, radius * 2.0, radius * 2.0);
+        g.setFill(Color.web("#fff6dd"));
+        g.fillOval(projectile.getX() - radius * 0.45, projectile.getY() - radius * 0.45,
+                radius * 0.9, radius * 0.9);
+    }
+
+    /** 归影双刃的旋刃：合拢成梭形的紫刃，返程时更暗一些表示已经在回家。 */
+    private void drawShadowFang(GraphicsContext g, Projectile projectile) {
+        double angle = Math.toDegrees(Math.atan2(projectile.getVelocityY(), projectile.getVelocityX()));
+        double size = Math.max(22.0, projectile.getRadius() * 2.6);
+        double alpha = projectile.isReturning() ? 0.62 : 0.92;
+        g.save();
+        g.translate(projectile.getX(), projectile.getY());
+        g.rotate(angle);
+        g.setGlobalBlendMode(BlendMode.ADD);
+        g.setFill(Color.rgb(168, 96, 236, 0.30 * alpha));
+        g.fillOval(-size, -size * 0.6, size * 2, size * 1.2);
+        g.setGlobalBlendMode(BlendMode.SRC_OVER);
+        g.setFill(Color.web("#c98df5"));
+        g.fillPolygon(new double[]{-size * 0.8, size, size * 0.35, -size * 0.2},
+                new double[]{0, 0, size * 0.42, size * 0.42}, 4);
+        g.setFill(Color.web("#efe0ff"));
+        g.fillPolygon(new double[]{-size * 0.8, size, size * 0.35, -size * 0.2},
+                new double[]{0, 0, -size * 0.42, -size * 0.42}, 4);
+        g.restore();
+    }
+
+    /**
+     * 影界近战弧。
+     *
+     * <p>扇形角度与距离都读模型里那一轮的实际值：环月镰是 360° 环斩、重剑是 40° 窄劈，
+     * 用固定常量画就会让玩家看到的范围和实际结算范围对不上。
+     */
+    private void drawMeleeArc(GraphicsContext g, GameSession session, Player player) {
+        var attacks = session.getAttackSystem();
+        double angle = Math.toDegrees(attacks.getMeleeAngleRadians());
+        double arc = attacks.getMeleeArcDegrees();
+        double range = attacks.getMeleeRange();
+        // 环月镰是整圈，用 slash 贴图会缺一角，所以整圈一律走圆弧画法。
+        if (arc < 360.0 && SHADOW_SLASHES.length > 0) {
+            Image slash = SHADOW_SLASHES[Math.min(SHADOW_SLASHES.length - 1,
+                    (int) (player.getAnimationTime() * 12.0) % SHADOW_SLASHES.length)];
+            double size = Math.max(120.0, range * 1.05);
+            g.save();
+            g.translate(player.getX(), player.getY());
+            g.rotate(angle);
+            g.drawImage(slash, -size / 2.0, -size * 0.5,
+                    size, size * slash.getHeight() / Math.max(1.0, slash.getWidth()));
+            g.restore();
+            return;
+        }
+        g.setStroke(Color.rgb(190, 132, 242, 0.82));
+        g.setLineWidth(10.0);
+        g.strokeArc(player.getX() - range, player.getY() - range, range * 2.0, range * 2.0,
+                -angle - arc / 2.0, arc, javafx.scene.shape.ArcType.OPEN);
+        g.setStroke(Color.rgb(239, 216, 255, 0.86));
+        g.setLineWidth(2.0);
+        g.strokeArc(player.getX() - range, player.getY() - range, range * 2.0, range * 2.0,
+                -angle - arc / 2.0, arc, javafx.scene.shape.ArcType.OPEN);
     }
 
     // 以下两个方法当前没有任何调用点（IDE 的 Unused 检查会报）：敌人与敌方弹体都改由
@@ -1085,7 +1171,8 @@ public final class GameRenderer {
                     EQUIP_PANEL_X + 12, EQUIP_PANEL_Y + height - 8.0);
         } else {
             g.setFill(Color.web("#a396b2"));
-            g.fillText("装备攻击 +" + player.getEquipmentAttackBonus() + "　·　悬停查看效果",
+            g.fillText("伤害 " + player.getDamageText() + "（装备 +"
+                            + Math.round(player.getEquipmentDamageBonus() * 100) + "%）　·　悬停查看效果",
                     EQUIP_PANEL_X + 12, EQUIP_PANEL_Y + height - 8.0);
         }
     }
