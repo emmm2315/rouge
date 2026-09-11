@@ -3,6 +3,7 @@ package com.phantomcorridor.view;
 import com.phantomcorridor.config.AppConfig;
 import com.phantomcorridor.config.GameConfig;
 import com.phantomcorridor.config.RoomConfig;
+import com.phantomcorridor.model.EquipmentType;
 import com.phantomcorridor.model.GameSession;
 import com.phantomcorridor.model.Pickup;
 import com.phantomcorridor.model.RoomType;
@@ -59,6 +60,36 @@ public final class GameRenderer {
     private static final Color SHIELD_BLUE = Color.web("#66d9f0");
 
     /**
+     * 左上角信息面板的版面。
+     *
+     * <p>整块面板原本是 470×164，占了四分之一个屏幕：玩家真正需要的只有“还剩多少血、
+     * 还打几次、够不够切界”，所以整体缩到一半左右。
+     *
+     * <p>宽度留到 350 是为了底行的「光残敌 / 影残敌 / 金币 / 盾」在放大的字号下仍然一行放得下——
+     * 字号放大之后最容易出的问题就是这里被迫换行，把面板撑高、挤到装备栏上。
+     * 所有坐标都从这里取，改版面只要改这一处。
+     */
+    private static final double HUD_X = 20.0;
+    private static final double HUD_Y = 18.0;
+    private static final double HUD_WIDTH = 350.0;
+    private static final double HUD_HEIGHT = 130.0;
+    /** 数值列的起点与宽度：生命条、攻击格、相位条共用同一条基线，视觉上对齐。 */
+    private static final double HUD_VALUE_X = 92.0;
+    private static final double HUD_VALUE_WIDTH = 190.0;
+
+    /** 装备栏版面：贴在信息面板正下方，三行竖排，名字与说明才有位置。 */
+    private static final double EQUIP_PANEL_X = HUD_X;
+    private static final double EQUIP_PANEL_Y = HUD_Y + HUD_HEIGHT + 8.0;
+    private static final double EQUIP_PANEL_WIDTH = 350.0;
+    /** 每一行装备（编号牌 + 图标 + 名字）的高度与间距。 */
+    private static final double EQUIP_ROW_HEIGHT = 28.0;
+    private static final double EQUIP_ROW_GAP = 5.0;
+
+    /** 小地图面板的左上角：排在信息面板与光/影徽章下方，不与它们抢位置。 */
+    private static final double MINI_MAP_X = 1050.0;
+    private static final double MINI_MAP_Y = 130.0;
+
+    /**
      * 飘字停留时间（秒）。
      *
      * <p>必须与 {@code EnemySystem.DAMAGE_FLASH_TIME} 一致：渲染层用它把
@@ -112,6 +143,7 @@ public final class GameRenderer {
         drawMiniMap(g, session, light);
         drawRoomAnnouncement(g, session);
         drawControls(g, light);
+        drawEquipmentSelection(g, session);
         // 伤害飘字画在所有面板之上：挨打的即时反馈不该被 HUD 盖住。
         drawDamageFlashes(g, session);
         if (player.getHp() <= 0) drawDeathOverlay(g, session);
@@ -456,11 +488,10 @@ public final class GameRenderer {
             int icon = pickup.type() == Pickup.Type.COIN ? 1
                     : pickup.type() == Pickup.Type.ITEM ? 2 + Math.floorMod(pickup.amount(), 6) : -1;
             if (pickup.type() == Pickup.Type.EQUIPMENT) {
-                Image source = pickup.amount() < 3 ? WEAPON_ICONS : EQUIPMENT_ICONS;
-                int local = pickup.amount() % 3;
-                if (source != null) g.drawImage(source, local * source.getWidth() / 3.0, 0,
-                        source.getWidth() / 3.0, source.getHeight(), pickup.x() - 24, pickup.y() - 24, 48, 48);
-                else { g.setFill(color); g.fillRect(pickup.x() - 8, pickup.y() - 8, 16, 16); }
+                // 地面装备与装备栏、替换面板共用一套画法：独立贴图优先，旧三格图集兜底。
+                EquipmentType type = EquipmentType.values()[Math.floorMod(
+                        pickup.amount(), EquipmentType.values().length)];
+                drawEquipmentIcon(g, type, pickup.x() - 24, pickup.y() - 24, 48);
             } else if (pickup.type() == Pickup.Type.HEALTH) {
                 drawHealthPack(g, pickup.x(), pickup.y());
             } else if (icon >= 0 && REWARD_ICONS != null) {
@@ -614,6 +645,33 @@ public final class GameRenderer {
         g.setTextAlign(TextAlignment.LEFT);
     }
 
+    /**
+     * 装备图标的唯一画法：地面掉落物、装备栏与替换面板共用。
+     *
+     * <p>优先用装备自己的独立贴图（{@code ui/equipment/*.png}），没有时才退回旧的三格图集——
+     * 旧图集只有三张图，新增的武器如果都退回它，玩家会看到「三叉杖」长得像「法杖」。
+     */
+    private void drawEquipmentIcon(GraphicsContext g, EquipmentType item, double x, double y, double size) {
+        Image dedicated = item.assetId() == null ? null : EQUIPMENT_ASSETS.get(item.assetId());
+        if (dedicated != null) {
+            g.drawImage(dedicated, 0, 0, dedicated.getWidth(), dedicated.getHeight(), x, y, size, size);
+            return;
+        }
+        drawAtlasIcon(g, item.iconIndex() % 3, x, y, size, Color.web("#f0c86e"));
+    }
+
+    /** 旧图集回退：三格横排图集里取第 {@code cell} 格；图集缺失时画一个纯色方块兜底。 */
+    private void drawAtlasIcon(GraphicsContext g, int cell, double x, double y, double size, Color fallback) {
+        Image source = cell < 3 ? WEAPON_ICONS : EQUIPMENT_ICONS;
+        if (source == null) {
+            g.setFill(fallback);
+            g.fillRect(x + size / 2.0 - 8, y + size / 2.0 - 8, 16, 16);
+            return;
+        }
+        double cellWidth = source.getWidth() / 3.0;
+        g.drawImage(source, cell * cellWidth, 0, cellWidth, source.getHeight(), x, y, size, size);
+    }
+
     /** 生命恢复药剂：红包 + 白十字，比一个纯色小方块更容易认。 */
     private void drawHealthPack(GraphicsContext g, double x, double y) {
         g.setFill(Color.web("#c8454c"));
@@ -686,6 +744,153 @@ public final class GameRenderer {
     }
 
     /**
+     * 满栏拾取/购买时的换装面板。
+     *
+     * <p>版面上分四段：标题 → 这次要装上的是什么 → 三个可替换的槽位 → 操作提示。
+     *
+     * <p>每行按固定栏位排版（键位牌 / 图标 / 名字），栏位之间留出明确间距：
+     * 上一版把图标和名字分别放在 50 与 84，图标宽 22 像素再加上视觉留白就贴到字上了，
+     * 看起来像两件东西挤在一起。同名件在这一版仍然标「×N」——这里要按编号选替换哪一格，
+     * 三行并排显示同名装备时必须能区分“第几件”，否则玩家不知道该按哪个键。
+     *
+     * <p>面板之外压了一层暗幕：换装是即时战场上的决策，压暗背景能让视线落在三个槽位上。
+     */
+    private void drawEquipmentSelection(GraphicsContext g, GameSession session) {
+        Pickup incoming = session.getPendingEquipment();
+        if (incoming == null) return;
+        Player player = session.getPlayer();
+        int price = session.getPendingEquipmentPrice();
+        boolean purchase = session.isPendingEquipmentPurchase();
+        boolean affordable = !purchase || player.getCoins() >= price;
+        EquipmentType incomingType = EquipmentType.values()[Math.floorMod(
+                incoming.amount(), EquipmentType.values().length)];
+
+        double panelWidth = 540.0;
+        // 版面高度由内容推导，避免再出现“提示文字压在第三行上”：
+        // 标题 44 → 说明块 58 → 三行装备 58+3×(40+8) → 提示 52，合计 268，取 282 留余量。
+        double rowHeight = 40.0;
+        double rowGap = 8.0;
+        double rowsTop = 116.0;
+        double footerTop = rowsTop + 3 * (rowHeight + rowGap) + 10.0;
+        double panelHeight = footerTop + 52.0;
+        double x = AppConfig.VIEW_WIDTH / 2.0 - panelWidth / 2.0;
+        double y = AppConfig.VIEW_HEIGHT / 2.0 - panelHeight / 2.0;
+        double centerX = AppConfig.VIEW_WIDTH / 2.0;
+
+        g.setFill(Color.rgb(3, 2, 7, .62));
+        g.fillRect(0, 0, AppConfig.VIEW_WIDTH, AppConfig.VIEW_HEIGHT);
+        g.setFill(Color.rgb(6, 5, 12, .96));
+        g.fillRoundRect(x, y, panelWidth, panelHeight, 16, 16);
+        g.setStroke(Color.web("#f2d27a"));
+        g.setLineWidth(2.0);
+        g.strokeRoundRect(x, y, panelWidth, panelHeight, 16, 16);
+        // 顶部一道金色细线：纯黑底上只靠描边会显得发闷，加一条亮线把标题托起来。
+        g.setStroke(Color.rgb(242, 210, 122, .38));
+        g.setLineWidth(1.0);
+        g.strokeLine(x + 18, y + 44, x + panelWidth - 18, y + 44);
+
+        g.setTextAlign(TextAlignment.CENTER);
+        g.setFill(Color.web("#fff6d8"));
+        g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 22));
+        g.fillText("装备栏已满", centerX, y + 31);
+
+        // 要装上的那一件：图标 + 标题。这里有个容易踩的坑——本方法前面把对齐设成了 CENTER，
+        // 所以 fillText 的 x 是**文字中心**而不是左边界。上一版按“左边界”去算图标位置，
+        // 实际文字左缘比图标还靠左半个标题宽，于是直接压在图标上。
+        // 现在交给 layoutIconWithText 把文字宽度量准后再定位（见该方法的说明）。
+        Font headlineFont = Font.font("Microsoft YaHei UI", FontWeight.BOLD, 15);
+        g.setFont(headlineFont);
+        String headline = purchase
+                ? "花 " + price + " 金币买下「" + incomingType.displayName() + "」"
+                : "拾取「" + incomingType.displayName() + "」";
+        double iconSize = 30.0;
+        double iconGap = 18.0;
+        // 标题先把宽度限制在「面板内宽 - 图标 - 间距」，再据此定位，长文案（带价格的那种）
+        // 会先被截短，不会把整块挤到面板外或压回图标上。
+        String fitted = fitText(headline, panelWidth - 70.0 - iconSize - iconGap, headlineFont);
+        TextLayout.IconText layout =
+                TextLayout.iconWithText(centerX, iconSize, iconGap, fitted, headlineFont);
+        drawEquipmentIcon(g, incomingType, layout.iconX(), y + 56, iconSize);
+        g.setFill(Color.web("#ffe9b0"));
+        g.fillText(fitted, layout.textCenterX(), y + 78);
+
+        g.setFont(Font.font("Microsoft YaHei UI", 11));
+        g.setFill(Color.web("#bcb0c8"));
+        // 说明行按“面板内宽”实测截断，不再按字数猜：中英混排的字宽差异很大。
+        g.fillText(fitText(incomingType.description(), panelWidth - 56.0, Font.font("Microsoft YaHei UI", 11)),
+                centerX, y + 100);
+
+        // 三个槽位：键位牌 / 图标 / 名字，三栏固定位置，栏与栏之间留白。
+        //
+        // 这一段的文字统一改成左对齐：面板整体是 CENTER 对齐，行内文字若也跟着居中，
+        // x 就变成“文字中心”，短名字会往左漂、长名字会往右伸，怎么调栏位都对不齐图标。
+        // 左对齐 + 实测宽度之后，图标右缘与文字左缘之间的间距才是真正固定的。
+        double rowX = x + 28;
+        double rowWidth = panelWidth - 56;
+        double badgeX = rowX + 12;
+        double iconX = rowX + 66;
+        double nameX = iconX + 30.0 + 20.0;
+        double metaFontSize = 9;
+        Font metaFont = Font.font("Microsoft YaHei UI", metaFontSize);
+        for (int slot = 0; slot < player.equipmentCapacity(); slot++) {
+            double rowY = y + rowsTop + slot * (rowHeight + rowGap);
+            boolean occupied = slot < player.getEquipment().size();
+            g.setFill(Color.rgb(30, 24, 44, .96));
+            g.fillRoundRect(rowX, rowY, rowWidth, rowHeight, 9, 9);
+            g.setStroke(occupied ? Color.web("#b48ef0") : Color.rgb(104, 97, 116, 0.7));
+            g.setLineWidth(1.0);
+            g.strokeRoundRect(rowX, rowY, rowWidth, rowHeight, 9, 9);
+
+            // 行内一切文字都用左对齐，键位牌与名字各占自己那一栏。
+            g.setTextAlign(TextAlignment.LEFT);
+
+            // 键位牌固定在行首：玩家扫一眼左边就知道该按哪个键。
+            g.setFill(occupied ? Color.rgb(88, 66, 128, .98) : Color.rgb(38, 33, 52, .92));
+            g.fillRoundRect(badgeX, rowY + 7, 40, rowHeight - 14, 6, 6);
+            g.setFill(occupied ? Color.web("#fff6d4") : Color.web("#89819a"));
+            g.setFont(Font.font("Consolas", FontWeight.BOLD, 15));
+            g.fillText("[" + (slot + 1) + "]", badgeX + 8, rowY + rowHeight / 2.0 + 5.0);
+
+            if (!occupied) {
+                g.setFill(Color.web("#89819a")); g.setFont(Font.font("Microsoft YaHei UI", 12));
+                g.fillText("空槽", nameX, rowY + rowHeight / 2.0 + 4.0);
+                continue;
+            }
+            EquipmentType equipped = player.getEquipment().get(slot);
+            drawEquipmentIcon(g, equipped, iconX, rowY + 5, 30);
+            int copies = player.equipmentCount(equipped);
+            Font nameFont = Font.font("Microsoft YaHei UI", FontWeight.BOLD, 14);
+            String label = equipped.displayName() + (copies > 1 ? " ×" + copies : "");
+            // 名字与右侧的「同名叠加」注释共用一行，各自的可用宽度都实测过。
+            double metaWidth = copies > 1 ? textWidth("同名叠加", metaFont) + 10.0 : 0.0;
+            g.setFill(Color.web("#f6f0ff")); g.setFont(nameFont);
+            double nameRoom = rowX + rowWidth - 14.0 - nameX - metaWidth;
+            g.fillText(fitText(label, nameRoom, nameFont), nameX, rowY + rowHeight / 2.0 + 5.0);
+            if (copies > 1) {
+                g.setFill(Color.web("#c0a8dc")); g.setFont(metaFont);
+                g.fillText("同名叠加", rowX + rowWidth - 14.0 - metaWidth + 10.0, rowY + rowHeight / 2.0 + 3.0);
+            }
+        }
+        // 下面几行提示本来就在 CENTER 对齐下画的，恢复回去。
+        g.setTextAlign(TextAlignment.CENTER);
+
+        // 操作提示：操作键写亮，语义后缀写暗；「换下的会留在地上」这类解释交给
+        // 地面上的实物去说明，面板里不再重复一遍。
+        g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 14));
+        g.setFill(Color.web("#f0e6cc"));
+        g.fillText("按 1 / 2 / 3 替换对应装备", centerX, y + footerTop + 12.0);
+        g.setFont(Font.font("Microsoft YaHei UI", 12));
+        if (!affordable) {
+            g.setFill(Color.web("#f2838a"));
+            g.fillText("金币不足：需 " + price + "，当前 " + player.getCoins(), centerX, y + footerTop + 34.0);
+        } else {
+            g.setFill(Color.web("#a99bb2"));
+            g.fillText("按 ESC 取消", centerX, y + footerTop + 34.0);
+        }
+        g.setTextAlign(TextAlignment.LEFT);
+    }
+
+    /**
      * 生命条与护盾条。
      *
      * <p>三点约束，缺一个就会读错：
@@ -700,21 +905,22 @@ public final class GameRenderer {
      * </ul>
      */
     private void drawHealthBar(GraphicsContext g, Player player) {
-        double x = 137.0;
-        double y = 76.0;
-        double width = GameConfig.HUD_HEALTH_BAR_WIDTH;
-        double height = GameConfig.HUD_HEALTH_BAR_HEIGHT;
+        // 条跟着信息面板一起定尺寸；剩余宽度留给右侧的盾量胶囊。
+        double x = HUD_VALUE_X;
+        double y = HUD_Y + 12;
+        double width = GameConfig.HUD_HEALTH_BAR_WIDTH * 0.85;
+        double height = GameConfig.HUD_HEALTH_BAR_HEIGHT * 0.87;
         double ratio = Math.max(0.0, Math.min(1.0, player.getHp() / (double) player.maxHp()));
         double filled = width * ratio;
 
         g.setFill(Color.rgb(0, 0, 0, 0.72));
-        g.fillRoundRect(x, y, width, height, 7, 7);
+        g.fillRoundRect(x, y, width, height, 5, 5);
         // 低血时条体本身变暗红，配合条内数字一起给“快死了”的信号。
         Color blood = ratio > 0.5 ? Color.web("#d75b54")
                 : ratio > 0.25 ? Color.web("#c4453f") : Color.web("#8e2b2b");
         if (filled > 0.5) {
             g.setFill(blood);
-            g.fillRoundRect(x, y, filled, height, 7, 7);
+            g.fillRoundRect(x, y, filled, height, 5, 5);
         }
         // 每格一根刻度：20 点一格，正好 5 格，和旧版 5 颗心的读法对得上。
         int segments = Math.max(1, (player.maxHp() + GameConfig.HUD_HEALTH_SEGMENT_VALUE - 1)
@@ -726,30 +932,35 @@ public final class GameRenderer {
             g.strokeLine(divider, y + 1.5, divider, y + height - 1.5);
         }
         g.setStroke(Color.rgb(255, 255, 255, 0.28));
-        g.strokeRoundRect(x, y, width, height, 7, 7);
+        g.strokeRoundRect(x, y, width, height, 5, 5);
 
-        // 护盾条追加在血条右侧，使用灰白色，避免与生命填充混在一起。
+        // 盾是独立的一小截胶囊，排在血条右边。
+        //
+        // 胶囊宽度按「护盾上限 / 生命上限」定，填充按「当前盾 / 护盾上限」——两把尺子必须分开：
+        // 旧版把填充算成 当前盾/生命上限，却把胶囊画成固定 30% 宽，于是 30 点盾配 100 点血时
+        // 填充只能走到胶囊的 100%，看起来像"满格"，但只要护盾上限不是恰好 30（相位容器 +12、
+        // 或者生命上限被心核抬高）就永远差一截，玩家会以为开局没给满盾。
         if (player.getMaxShield() > 0.0) {
-            double shieldLength = Math.min(width * player.getShieldBarRatio(), width);
-            if (shieldLength > 0.5) {
-                double shieldX = x + width + 6.0;
+            double shieldWidth = Math.max(16.0, width * Math.min(0.30, player.getMaxShield() / Math.max(1.0, player.maxHp())));
+            double shieldX = x + width + 6.0;
+            g.setFill(Color.rgb(0, 0, 0, 0.72));
+            g.fillRoundRect(shieldX, y, shieldWidth, height, 5, 5);
+            double shieldFilled = shieldWidth * Math.max(0.0, Math.min(1.0, player.getShieldRatio()));
+            if (shieldFilled > 0.5) {
                 g.setFill(Color.rgb(218, 224, 232, 0.92));
-                g.fillRoundRect(shieldX, y, shieldLength, height, 7, 7);
-                g.setStroke(Color.web("#ffffff"));
-                g.setLineWidth(1.0);
-                g.strokeRoundRect(shieldX, y, shieldLength, height, 7, 7);
+                g.fillRoundRect(shieldX, y, shieldFilled, height, 5, 5);
             }
+            g.setStroke(Color.rgb(255, 255, 255, 0.34));
+            g.setLineWidth(1.0);
+            g.strokeRoundRect(shieldX, y, shieldWidth, height, 5, 5);
         }
 
-        g.setFill(Color.web("#ffe9ec"));
-        g.setFont(Font.font("Consolas", FontWeight.BOLD, 13));
-        g.fillText(player.getHp() + " / " + player.maxHp(), x + 7, y + height - 4.0);
-        // 护盾点数写在血条右侧；血量本身占满整条时右端没有空位，这种情况下
-        // 就不写数字——下沿那条护盾条本身已经说明了剩余量，不必压着血量文字画。
-        if (player.hasShield() && filled < width - 34.0) {
-            g.setFill(SHIELD_BLUE);
-            g.fillText("◆ " + formatPoints(player.getShield()), x + width + 12, y + height - 4.0);
-        }
+        // 血量数字居中压在条上：左对齐时数字和左侧填充边界一起动，扫一眼很难读出比例。
+        g.setTextAlign(TextAlignment.CENTER);
+        g.setFill(Color.web("#fff3f4"));
+        g.setFont(Font.font("Consolas", FontWeight.BOLD, 11));
+        g.fillText(player.getHp() + "/" + player.maxHp(), x + width / 2.0, y + height - 3.0);
+        g.setTextAlign(TextAlignment.LEFT);
     }
 
     /** 伤害点数文本：整数不拖小数点，半整数（4.5）才显一位小数。 */
@@ -790,27 +1001,133 @@ public final class GameRenderer {
         g.setTextAlign(TextAlignment.LEFT);
     }
 
+    /**
+     * 装备栏：三行竖排，每行「数字牌 + 独立图标 + 名字」。
+     *
+     * <p>旧版把三件装备横着挤进 46×46 的格子里，名字根本没地方写，玩家看不出装了什么。
+     * 竖排之后每行有 265 像素的宽度可用，名字写得下，面板本身也只用 285×126。
+     *
+     * <p>同名装备不再标「×N」：占了两格就画两行，件数本来就一眼能看出来，再标一遍是噪音。
+     * 真正需要区分“第几件”的地方是换装面板——那里要按编号替换，所以那边保留 ×N。
+     *
+     * <p>鼠标悬停在某一行上时，底部的效果行换成那件装备的说明。命中判定用**该行自己的矩形**：
+     * 之前用「距行中心 78 像素」的圆，三行间距只有 30 像素，圆与圆大幅重叠，
+     * 鼠标停在一行上会把相邻行也算成悬停目标——谁在后谁赢，于是永远只显示最后那一件。
+     */
     private void drawEquipmentBar(GraphicsContext g, GameSession session) {
         Player player = session.getPlayer();
-        g.setFill(Color.rgb(4, 4, 8, .74));
-        g.fillRoundRect(56, 228, 370, 84, 12, 12);
-        g.setFill(Color.web("#d8c9df")); g.setFont(Font.font("Microsoft YaHei UI", 12));
-        g.fillText("装备（最多 3 件）", 70, 248);
-        g.setFill(Color.web("#a99bb2"));
-        g.fillText("攻击 1 + " + (player.getAttackDamage() - 1) + "  ·  已装备属性实时生效", 70, 306);
-        int index = 0;
-        for (var item : player.getEquipment()) {
-            Image source = item.iconIndex() < 3 ? WEAPON_ICONS : EQUIPMENT_ICONS;
-            int local = item.iconIndex() % 3;
-            double x = 110 + index * 52;
-            if (source != null) g.drawImage(source, local * source.getWidth() / 3.0, 0,
-                    source.getWidth() / 3.0, source.getHeight(), x, 255, 42, 42);
-            if (Math.hypot(session.getAimX() - (x + 21), session.getAimY() - 276) < 26) {
-                g.setFill(Color.rgb(10, 8, 16, .94)); g.fillRoundRect(x, 300, 220, 38, 7, 7);
-                g.setFill(Color.WHITE); g.fillText(item.displayName() + "：" + item.description(), x + 6, 324);
-            }
-            index++;
+        int capacity = player.equipmentCapacity();
+        double height = EQUIP_ROW_HEIGHT + 6.0 + capacity * EQUIP_ROW_HEIGHT
+                + (capacity - 1) * EQUIP_ROW_GAP + 22.0;
+
+        g.setFill(Color.rgb(4, 4, 8, .78));
+        g.fillRoundRect(EQUIP_PANEL_X, EQUIP_PANEL_Y, EQUIP_PANEL_WIDTH, height, 10, 10);
+        g.setStroke(Color.rgb(169, 135, 230, 0.42));
+        g.setLineWidth(1.0);
+        g.strokeRoundRect(EQUIP_PANEL_X, EQUIP_PANEL_Y, EQUIP_PANEL_WIDTH, height, 10, 10);
+
+        // 标题行：左边写清“几格”，右边给出丢弃操作，省下一整行高度。
+        // 战斗中丢弃被禁用，标题改成红字直接说明，免得玩家以为按键坏了。
+        boolean inCombat = session.isInCombat();
+        g.setFill(Color.web("#e4d9f2")); g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 12));
+        g.fillText("装备 " + capacity + " 格", EQUIP_PANEL_X + 12, EQUIP_PANEL_Y + 18);
+        if (inCombat) {
+            g.setFill(Color.web("#d98a92")); g.setFont(Font.font("Microsoft YaHei UI", 10));
+            g.fillText("战斗中无法丢弃", EQUIP_PANEL_X + 78, EQUIP_PANEL_Y + 18);
+        } else {
+            g.setFill(Color.web("#a396b2")); g.setFont(Font.font("Microsoft YaHei UI", 10));
+            g.fillText("按 " + slotKeys(capacity) + " 丢弃对应格", EQUIP_PANEL_X + 78, EQUIP_PANEL_Y + 18);
         }
+
+        // 悬停目标唯一：先判定鼠标落在哪一行，再决定要不要显示说明。
+        int hoveredSlot = hoveredSlot(session, capacity);
+        EquipmentType hovered = hoveredSlot >= 0 && hoveredSlot < player.getEquipment().size()
+                ? player.getEquipment().get(hoveredSlot) : null;
+
+        for (int slot = 0; slot < capacity; slot++) {
+            double rowY = EQUIP_PANEL_Y + EQUIP_ROW_HEIGHT + 7.0 + slot * (EQUIP_ROW_HEIGHT + EQUIP_ROW_GAP);
+            boolean occupied = slot < player.getEquipment().size();
+            EquipmentType item = occupied ? player.getEquipment().get(slot) : null;
+            boolean hover = slot == hoveredSlot && item != null;
+
+            g.setFill(hover ? Color.rgb(56, 43, 78, .96) : Color.rgb(24, 20, 34, .94));
+            g.fillRoundRect(EQUIP_PANEL_X + 8, rowY, EQUIP_PANEL_WIDTH - 16, EQUIP_ROW_HEIGHT, 7, 7);
+            g.setStroke(hover ? Color.web("#e0c8fa")
+                    : occupied ? Color.rgb(180, 146, 240, 0.58) : Color.rgb(104, 97, 116, 0.50));
+            g.setLineWidth(hover ? 1.6 : 1.0);
+            g.strokeRoundRect(EQUIP_PANEL_X + 8, rowY, EQUIP_PANEL_WIDTH - 16, EQUIP_ROW_HEIGHT, 7, 7);
+
+            // 数字牌：和替换面板里的 [1] [2] [3] 是同一套编号，玩家能把两处对上。
+            g.setFill(occupied ? Color.rgb(74, 57, 108, .98) : Color.rgb(34, 30, 46, .9));
+            g.fillRoundRect(EQUIP_PANEL_X + 12, rowY + 5, 19, 18, 4, 4);
+            g.setFill(occupied ? Color.web("#fff6d4") : Color.web("#89819a"));
+            g.setFont(Font.font("Consolas", FontWeight.BOLD, 12));
+            g.fillText(String.valueOf(slot + 1), EQUIP_PANEL_X + 19, rowY + 19);
+
+            if (item == null) {
+                g.setFill(Color.web("#797183")); g.setFont(Font.font("Microsoft YaHei UI", 11));
+                g.fillText("空槽", EQUIP_PANEL_X + 42, rowY + 19);
+                continue;
+            }
+            drawEquipmentIcon(g, item, EQUIP_PANEL_X + 36, rowY + 2, 24);
+            g.setFill(Color.web("#f4eeff")); g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 13));
+            g.fillText(item.displayName(), EQUIP_PANEL_X + 68, rowY + 19);
+        }
+
+        // 效果行：悬停时显示该装备说明，否则只报“装备贡献了多少攻击”。
+        // 加成写在装备栏、基础值写在信息面板，两个面板各说一半，玩家才分得清来源。
+        Font footerFont = Font.font("Microsoft YaHei UI", 10);
+        g.setFont(footerFont);
+        if (hovered != null) {
+            g.setFill(Color.web("#ded0ea"));
+            g.fillText(fitText(hovered.displayName() + "：" + hovered.description(),
+                            EQUIP_PANEL_WIDTH - 24.0, footerFont),
+                    EQUIP_PANEL_X + 12, EQUIP_PANEL_Y + height - 8.0);
+        } else {
+            g.setFill(Color.web("#a396b2"));
+            g.fillText("装备攻击 +" + player.getEquipmentAttackBonus() + "　·　悬停查看效果",
+                    EQUIP_PANEL_X + 12, EQUIP_PANEL_Y + height - 8.0);
+        }
+    }
+
+    /**
+     * 鼠标当前停在第几行装备上；不在装备栏范围内时返回 -1。
+     *
+     * <p>用行矩形而不是距离：行与行之间只隔 4 像素，任何“半径”写法都会同时命中两行。
+     */
+    private int hoveredSlot(GameSession session, int capacity) {
+        double aimX = session.getAimX();
+        double aimY = session.getAimY();
+        if (aimX < EQUIP_PANEL_X || aimX > EQUIP_PANEL_X + EQUIP_PANEL_WIDTH) return -1;
+        for (int slot = 0; slot < capacity; slot++) {
+            double rowY = EQUIP_PANEL_Y + EQUIP_ROW_HEIGHT + 7.0 + slot * (EQUIP_ROW_HEIGHT + EQUIP_ROW_GAP);
+            if (aimY >= rowY && aimY <= rowY + EQUIP_ROW_HEIGHT) return slot;
+        }
+        return -1;
+    }
+
+    /** 槽位快捷键文本，例如「1 / 2 / 3」；槽位数变化时说明文字自动跟上。 */
+    private static String slotKeys(int capacity) {
+        StringBuilder text = new StringBuilder();
+        for (int i = 1; i <= capacity; i++) {
+            if (i > 1) text.append(" / ");
+            text.append(i);
+        }
+        return text.toString();
+    }
+
+    /**
+     * 实测一段文字在当前字体下的渲染宽度（像素）。
+     *
+     * @see TextLayout#width(String, Font)
+     */
+    private static double textWidth(String text, Font font) {
+        return TextLayout.width(text, font);
+    }
+
+    /** 按可用宽度实测截断：放不下时从尾部砍字并补省略号，保证不会溢出版面。 */
+    private static String fitText(String text, double maxWidth, Font font) {
+        return TextLayout.fit(text, maxWidth, font);
     }
 
     private void drawAim(GraphicsContext g, GameSession session, boolean light) {
@@ -907,8 +1224,8 @@ public final class GameRenderer {
         if (session.getLightEnemyCount() + session.getShadowEnemyCount() > 0) return;
         Room current = session.getNavigation().getCurrentRoom();
         double panelSize = MINI_MAP_PANEL_SIZE;
-        double panelX = AppConfig.VIEW_WIDTH - panelSize - 48.0;
-        double panelY = 188.0;
+        double panelX = MINI_MAP_X;
+        double panelY = MINI_MAP_Y;
         double originX = panelX + panelSize / 2.0;
         double originY = panelY + panelSize / 2.0;
         double scale = MINI_MAP_SCALE;
@@ -1298,72 +1615,93 @@ public final class GameRenderer {
         Player player = session.getPlayer();
 
         g.setFill(Color.rgb(4, 4, 8, 0.76));
-        g.fillRoundRect(56, 58, 470, 164, 16, 16);
+        g.fillRoundRect(HUD_X, HUD_Y, HUD_WIDTH, HUD_HEIGHT, 10, 10);
         g.setStroke(Color.color(domain.getRed(), domain.getGreen(), domain.getBlue(), 0.55));
         g.setLineWidth(1.0);
-        g.strokeRoundRect(56, 58, 470, 164, 16, 16);
+        g.strokeRoundRect(HUD_X, HUD_Y, HUD_WIDTH, HUD_HEIGHT, 10, 10);
 
-        g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 17));
-        g.setFill(Color.web("#efe7d8"));
-        g.fillText("生命", 78, 91);
+        // 三行数值统一成「左侧小标签 + 右侧统一宽度的条形」。
+        // 字号取 13、颜色取接近纯白的暖白：这块面板是战斗中最常被扫视的地方，
+        // 之前 11 号灰字在深色底上要停下来辨认，反而拖慢读血线的速度。
+        g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 13));
+
+        g.setFill(Color.web("#fdf6e9"));
+        g.fillText("生命", HUD_X + 14, HUD_Y + 25);
         drawHealthBar(g, player);
-        g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 17));
 
-        g.setFill(Color.rgb(111, 177, 255, 0.9));
-        g.fillText("攻击", 78, 130);
+        g.setFill(Color.web("#8dc4ff"));
+        g.fillText("攻击", HUD_X + 14, HUD_Y + 46);
         int chargeSlots = player.getMaxAttackCharges();
-        double cellWidth = Math.min(40.0, 240.0 / Math.max(1, chargeSlots) - 6.0);
+        double cellWidth = Math.min(16.5, HUD_VALUE_WIDTH / Math.max(1, chargeSlots) - 2.5);
+        double cellGap = 2.5;
         for (int i = 0; i < chargeSlots; i++) {
             boolean filled = i < player.getAttackCharges();
-            double x = 137 + i * (cellWidth + 6);
-            g.setFill(filled ? Color.web("#61a9ff") : Color.rgb(255, 255, 255, 0.10));
-            g.fillRoundRect(x, 118, cellWidth, 12, 3, 3);
-            g.setStroke(Color.color(0.38, 0.66, 1.0, filled ? 0.9 : 0.28));
-            g.setLineWidth(1.0); g.strokeRoundRect(x, 118, cellWidth, 12, 3, 3);
+            double x = HUD_VALUE_X + i * (cellWidth + cellGap);
+            g.setFill(filled ? Color.web("#6cb4ff") : Color.rgb(255, 255, 255, 0.13));
+            g.fillRoundRect(x, HUD_Y + 34, cellWidth, 10, 2, 2);
+            g.setStroke(Color.color(0.45, 0.72, 1.0, filled ? 0.95 : 0.32));
+            g.setLineWidth(1.0); g.strokeRoundRect(x, HUD_Y + 34, cellWidth, 10, 2, 2);
         }
 
-        g.setFill(Color.web("#efe7d8"));
-        g.fillText("相位", 78, 177);
-        g.setFill(Color.rgb(255, 255, 255, 0.09));
-        g.fillRoundRect(137, 160, 252, 18, 9, 9);
+        g.setFill(Color.web("#fdf6e9"));
+        g.fillText("相位", HUD_X + 14, HUD_Y + 66);
+        double phaseY = HUD_Y + 54;
+        g.setFill(Color.rgb(255, 255, 255, 0.12));
+        g.fillRoundRect(HUD_VALUE_X, phaseY, HUD_VALUE_WIDTH, 14, 7, 7);
         double ratio = player.getPhaseEnergy() / GameConfig.PHASE_ENERGY_MAX;
         g.setFill(new LinearGradient(0, 0, 1, 0, true, CycleMethod.NO_CYCLE,
                 new Stop(0, LIGHT_GOLD), new Stop(1, SHADOW_VIOLET)));
-        g.fillRoundRect(137, 160, 252 * ratio, 18, 9, 9);
+        g.fillRoundRect(HUD_VALUE_X, phaseY, HUD_VALUE_WIDTH * ratio, 14, 7, 7);
         if (ratio >= 0.999) {
-            g.setStroke(Color.web("#fff4bc")); g.setLineWidth(2.0);
-            g.strokeRoundRect(135, 158, 256, 22, 11, 11);
+            g.setStroke(Color.web("#fff4bc")); g.setLineWidth(1.4);
+            g.strokeRoundRect(HUD_VALUE_X - 1.5, phaseY - 1.5, HUD_VALUE_WIDTH + 3, 17, 9, 9);
         }
 
-        g.setFill(Color.rgb(235, 226, 242, 0.64));
-        g.fillText("光界残敌  " + session.getLightEnemyCount() + "     影界残敌  "
-                + session.getShadowEnemyCount() + "     金币  " + session.getCoins(), 78, 207);
-        g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 17));
+        // 底行缩写成「光残敌 / 影残敌」：字数少了才放得下，盾量接在金币后面同一行。
+        // 盾量取整：护盾是临时生命值，小数（12.3）在这里只会占位置、读不出额外信息。
+        g.setFill(Color.web("#e8dff2"));
+        g.setFont(Font.font("Microsoft YaHei UI", 11));
+        g.fillText("光残敌 " + session.getLightEnemyCount() + "　影残敌 " + session.getShadowEnemyCount()
+                + "　金币 " + session.getCoins()
+                + "　盾 " + Math.round(player.getShield()) + "/" + Math.round(player.getMaxShield()),
+                HUD_X + 14, HUD_Y + 86);
 
-        double badgeX = AppConfig.VIEW_WIDTH - 103.0;
-        double badgeY = 105.0;
-        g.setFill(Color.rgb(4, 4, 8, 0.78));
-        g.fillOval(badgeX - 45, badgeY - 45, 90, 90);
-        g.setStroke(domain);
-        g.setLineWidth(2.5);
-        g.strokeOval(badgeX - 45, badgeY - 45, 90, 90);
-        g.setTextAlign(TextAlignment.CENTER);
-        g.setFill(domain);
-        g.setFont(Font.font("STKaiti", FontWeight.BOLD, 30));
-        g.fillText(light ? "光" : "影", badgeX, badgeY + 10);
-        g.setTextAlign(TextAlignment.LEFT);
+        // 这一行只讲“角色本身”：基础攻击是固定的 1，加成归到装备栏去显示，
+        // 两个面板各说一半，玩家才分得清哪一份是自己带的、哪一份是捡来的。
+        g.setFill(Color.web("#a99bb2"));
+        g.setFont(Font.font("Microsoft YaHei UI", 12));
+        g.fillText("基础攻击 " + Player.BASE_ATTACK_DAMAGE + "　·　加成见装备栏", HUD_X + 14, HUD_Y + 114);
+
+        drawWorldBadge(g, domain, light);
+        drawEquipmentBar(g, session);
 
         g.setFill(Color.rgb(230, 220, 235, 0.28));
         g.setFont(Font.font("Consolas", 11));
-        g.fillText(String.format("%.0f FPS", fps), AppConfig.VIEW_WIDTH - 103, 169);
-        drawEquipmentBar(g, session);
+        g.fillText(String.format("%.0f FPS", fps), AppConfig.VIEW_WIDTH - 150, 40);
+    }
+
+    /** 右上角的光/影徽章：缩小后给小地图让出了纵向空间。 */
+    private void drawWorldBadge(GraphicsContext g, Color domain, boolean light) {
+        double badgeX = AppConfig.VIEW_WIDTH - 122.0;
+        double badgeY = 52.0;
+        double radius = 38.0;
+        g.setFill(Color.rgb(4, 4, 8, 0.78));
+        g.fillOval(badgeX - radius, badgeY - radius, radius * 2, radius * 2);
+        g.setStroke(domain);
+        g.setLineWidth(2.2);
+        g.strokeOval(badgeX - radius, badgeY - radius, radius * 2, radius * 2);
+        g.setTextAlign(TextAlignment.CENTER);
+        g.setFill(domain);
+        g.setFont(Font.font("STKaiti", FontWeight.BOLD, 25));
+        g.fillText(light ? "光" : "影", badgeX, badgeY + 9);
+        g.setTextAlign(TextAlignment.LEFT);
     }
 
     private void drawControls(GraphicsContext g, boolean light) {
         g.setTextAlign(TextAlignment.CENTER);
         g.setFill(light ? Color.rgb(237, 210, 156, 0.56) : Color.rgb(198, 169, 230, 0.58));
         g.setFont(Font.font("Microsoft YaHei UI", 13));
-        g.fillText("WASD / 方向键移动    ·    鼠标瞄准 / 左键攻击    ·    空格 闪避冲刺    ·    E 交互    ·    TAB 穿梭双界    ·    ESC 暂停",
+        g.fillText("WASD / 方向键移动    ·    鼠标瞄准 / 左键攻击    ·    空格 闪避冲刺    ·    E 交互 / 换装    ·    1-3 丢弃装备    ·    TAB 穿梭双界    ·    ESC 取消 / 暂停",
                 AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT - 24.0);
         g.setTextAlign(TextAlignment.LEFT);
     }

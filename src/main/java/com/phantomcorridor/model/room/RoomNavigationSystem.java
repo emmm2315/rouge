@@ -29,9 +29,8 @@ public final class RoomNavigationSystem {
     }
 
     public void move(Player player, double directionX, double directionY, double dt) {
-        double speed = GameConfig.PLAYER_BASE_SPEED
-                * (player.getCurrentWorld() == WorldType.SHADOW ? GameConfig.SHADOW_SPEED_MULTIPLIER : 1.0);
-        displace(player, directionX, directionY, dt, speed);
+        // 速度问玩家模型：装备（暮色斗篷）会改变影界移速，导航层看不见装备栏。
+        displace(player, directionX, directionY, dt, player.movementSpeed());
     }
 
     /**

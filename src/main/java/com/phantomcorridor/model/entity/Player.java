@@ -13,6 +13,9 @@ import java.util.List;
 /** 玩家运行时模型，不依赖任何 JavaFX 控件。 */
 public final class Player {
 
+    /** 装备栏容量固定为三个槽位；满栏时由交互层要求玩家显式选择替换或取消。 */
+    public static final int EQUIPMENT_CAPACITY = 3;
+
     /** 受击结算结果：护盾吸收了多少、生命实际掉了多少、伤害类型是什么。 */
     public record DamageResult(double absorbedByShield, int healthLost, double remainingShield,
                                DamageType type) {
@@ -53,7 +56,8 @@ public final class Player {
     }
 
     public void reset(double x, double y) {
-        // 先清理上一局的装备，再计算初始生命上限，避免行者心核把新局初始血量错误地保留为 120。
+        // 先清理上一局的装备，再计算初始生命上限与护盾容量：此时装备栏为空，
+        // 所以新局不会继承上一局的「行者心核」生命上限或「相位容器」护盾容量。
         this.items.clear();
         this.equipment.clear();
         this.hp = maxHp();
@@ -82,16 +86,18 @@ public final class Player {
         this.shield = new Shield(shieldCapacity());
     }
 
-    public void move(double directionX, double directionY, double dt,
-                     double minX, double minY, double maxX, double maxY) {
-        double length = Math.hypot(directionX, directionY);
-        if (length == 0.0) {
-            return;
-        }
-        double speed = GameConfig.PLAYER_BASE_SPEED
-                * (currentWorld == WorldType.SHADOW ? GameConfig.SHADOW_SPEED_MULTIPLIER : 1.0);
-        x = clamp(x + directionX / length * speed * dt, minX, maxX);
-        y = clamp(y + directionY / length * speed * dt, minY, maxY);
+    /**
+     * 当前移动速度（像素/秒）。
+     *
+     * <p>影界本身更快，穿着「暮色斗篷」还要再快一档；同名斗篷按件数叠加。
+     * 实际位移由房间导航执行（它才知道墙在哪），但速度必须由这里算——
+     * 只有玩家模型看得见自己的装备栏，把公式写在导航层就会让装备效果静默失效。
+     */
+    public double movementSpeed() {
+        double speed = GameConfig.PLAYER_BASE_SPEED;
+        if (currentWorld != WorldType.SHADOW) return speed;
+        return speed * GameConfig.SHADOW_SPEED_MULTIPLIER
+                * (1.0 + equipmentCount(EquipmentType.DUSK_CLOAK) * 0.10);
     }
 
     /**
@@ -203,17 +209,54 @@ public final class Player {
         items.add(item);
         if (item == ItemType.UNIVERSAL || item == ItemType.DUAL) increaseAttackChargeCapacity(1);
     }
+    /**
+     * 把一件装备放进装备栏。
+     *
+     * <p>同名装备允许重复占用槽位，增益按件数叠加，所以这里不再按属性去重、也不再挤掉旧装备。
+     *
+     * <p>装备栏满时**什么都不做**：任何“自动腾位置”的策略都会让某一件装备凭空消失，
+     * 而规则要求装备只能在玩家看得见的地方转移。满栏的调用方必须先用
+     * {@link #isEquipmentFull()} 判断，转入替换选择流程（见
+     * {@code RoomContentSystem#collectEquipment}）。
+     */
     public void equip(EquipmentType item) {
-        if (item == null || equipment.contains(item)) return;
-        equipment.removeIf(existing -> existing.affinity().equals(item.affinity())
-                && !existing.affinity().equals("双界") && !existing.affinity().equals("通用"));
+        if (item == null || isEquipmentFull()) return;
         equipment.add(item);
-        while (equipment.size() > 3) equipment.remove(0);
-        // 护盾类装备会撑大容量：只同步容量、保留剩余量，
-        // 否则“在商店换一件饰品”就白送一整条护盾。
+        syncEquipmentDerivedStats();
+    }
+
+    public List<EquipmentType> getEquipment() { return Collections.unmodifiableList(equipment); }
+    public boolean isEquipmentFull() { return equipment.size() >= EQUIPMENT_CAPACITY; }
+    public int equipmentCapacity() { return EQUIPMENT_CAPACITY; }
+
+    /** 用新装备替换指定槽位，并把被替换的那件返回给交互层落到地上。 */
+    public EquipmentType replaceEquipment(int slot, EquipmentType item) {
+        if (item == null || slot < 0 || slot >= equipment.size()) return null;
+        EquipmentType discarded = equipment.set(slot, item);
+        syncEquipmentDerivedStats();
+        return discarded;
+    }
+
+    /** 丢弃指定槽位；地面落点由房间内容系统决定。 */
+    public EquipmentType removeEquipment(int slot) {
+        if (slot < 0 || slot >= equipment.size()) return null;
+        EquipmentType discarded = equipment.remove(slot);
+        syncEquipmentDerivedStats();
+        return discarded;
+    }
+
+    /**
+     * 装备变化后同步派生属性。
+     *
+     * <p>生命上限会随「行者心核」的件数变化：摘掉时把当前生命截到新上限，
+     * 装上时不补血（心核是“上限装备”而不是治疗道具）。
+     *
+     * <p>护盾只同步容量、保留剩余量，否则“在商店换一件饰品”就白送一整条护盾。
+     */
+    private void syncEquipmentDerivedStats() {
+        hp = Math.min(hp, maxHp());
         if (shield != null) shield.setCapacity(shieldCapacity());
     }
-    public List<EquipmentType> getEquipment() { return Collections.unmodifiableList(equipment); }
     public boolean consumeAttackCharge() {
         if (attackCharges <= 0) return false;
         attackCharges--; return true;
@@ -359,8 +402,8 @@ public final class Player {
 
     /** 当前最大生命值；行者心核按设计提升 20%，装备时不自动补血。 */
     public int maxHp() {
-        boolean hasHeart = equipment.contains(EquipmentType.WAYFARER_HEART);
-        return hasHeart ? (int) Math.ceil(GameConfig.PLAYER_MAX_HP * 1.20) : GameConfig.PLAYER_MAX_HP;
+        return (int) Math.ceil(GameConfig.PLAYER_MAX_HP
+                * (1.0 + equipmentCount(EquipmentType.WAYFARER_HEART) * 0.20));
     }
 
     public void restoreHealth(int amount) { hp = Math.min(maxHp(), hp + Math.max(0, amount)); }
@@ -387,15 +430,29 @@ public final class Player {
     public double getPhaseEnergy() { return phaseEnergy; }
     public int getAttackCharges() { return attackCharges; }
     public int getMaxAttackCharges() { return maxAttackCharges; }
+    /** 角色的基础攻击力（不含任何加成）：HUD 用它把“本身”和“装备加上去的”分开显示。 */
+    public static final int BASE_ATTACK_DAMAGE = 1;
+
     public int getAttackDamage() {
-        int bonus = items.stream().mapToInt(item -> item == ItemType.DUAL || item == ItemType.UNIVERSAL
-                || (currentWorld == WorldType.LIGHT && item == ItemType.LIGHT)
-                || (currentWorld == WorldType.SHADOW && item == ItemType.SHADOW) ? 1 : 0).sum();
-        bonus += equipment.stream().mapToInt(item -> item == EquipmentType.DAWN_WAND && currentWorld == WorldType.LIGHT ? 1
+        return BASE_ATTACK_DAMAGE + getAttackBonus();
+    }
+
+    /**
+     * 当前攻击力加成（道具 + 装备，且已经按当前世界结算）。
+     *
+     * <p>拆出来是为了让信息面板（角色本身）与装备栏（装备加成）能各说各的那一半，
+     * 两个面板显示同一个合计数时玩家分不清哪部分是自己的、哪部分是捡来的。
+     */
+    public int getAttackBonus() {
+        return getItemAttackBonus() + getEquipmentAttackBonus();
+    }
+
+    /** 攻击力加成里来自装备的那一部分（道具那部分 = {@link #getAttackBonus()} 减去它）。 */
+    public int getEquipmentAttackBonus() {
+        int bonus = equipment.stream().mapToInt(item -> item == EquipmentType.DAWN_WAND && currentWorld == WorldType.LIGHT ? 1
                 : item == EquipmentType.SHADOW_FANG && currentWorld == WorldType.SHADOW ? 1
                 : item == EquipmentType.RIFT_TWINBLADE || item == EquipmentType.DAWN_SEAL && currentWorld == WorldType.LIGHT ? 1
                 : 0).sum();
-        // 新增武器的首轮数值采用整数模型的最小可见增幅；精确多段伤害由攻击方案继续细分。
         bonus += equipment.stream().mapToInt(item -> switch (item) {
             case PRISM_FAN_WAND, SUNLANCE, MIRROR_ORB, SOLAR_BURST_STAFF ->
                     currentWorld == WorldType.LIGHT ? 1 : 0;
@@ -406,9 +463,27 @@ public final class Player {
             case HUNTERS_FANG -> currentWorld == WorldType.SHADOW ? 1 : 0;
             default -> 0;
         }).sum();
-        return 1 + bonus;
+        return bonus;
     }
-    public boolean hasEquipment(EquipmentType item) { return item != null && equipment.contains(item); }
+
+    /** 攻击力加成里来自道具的那一部分。 */
+    public int getItemAttackBonus() {
+        return items.stream().mapToInt(item -> item == ItemType.DUAL || item == ItemType.UNIVERSAL
+                || (currentWorld == WorldType.LIGHT && item == ItemType.LIGHT)
+                || (currentWorld == WorldType.SHADOW && item == ItemType.SHADOW) ? 1 : 0).sum();
+    }
+    /**
+     * 装备栏里是否有这件装备（数量无关的“有没有”查询）。
+     *
+     * <p>只为开关型效果准备（例如「棱光三叉杖」把光弹改成三向散射，装两把并不会变成六向）。
+     * 凡是数值增益都必须走 {@link #equipmentCount(EquipmentType)}，否则多带一件就白带。
+     */
+    public boolean hasEquipment(EquipmentType item) { return equipmentCount(item) > 0; }
+    /** 同名装备允许占用多个槽位；所有调用方都应按数量结算可叠加增益。 */
+    public int equipmentCount(EquipmentType item) {
+        if (item == null) return 0;
+        return (int) equipment.stream().filter(item::equals).count();
+    }
     public WorldType getCurrentWorld() { return currentWorld; }
     public PlayerAnimationState getAnimationState() { return animationState; }
     public double getAnimationTime() { return animationTime; }
