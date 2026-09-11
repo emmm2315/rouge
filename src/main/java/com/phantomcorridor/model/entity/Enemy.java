@@ -46,6 +46,11 @@ public final class Enemy {
     private boolean animationLoop = true;
     private int nextSkillIndex;
     private double guardRemaining;
+    /** 出招前摇期间的正面减伤（甲虫顶撞 25%、螳爵架镰 60%）；0 表示没有。 */
+    private double castGuardReduction;
+    private double castGuardArcDegrees;
+    /** 正面减伤的中轴方向（弧度），等于起手时锁定的瞄准角；NaN 表示未生效。 */
+    private double castGuardAngleRadians = Double.NaN;
 
     /**
      * @param floor      所在层数（从 1 开始）：生命值按层增长，防御随层提高
@@ -71,7 +76,7 @@ public final class Enemy {
                   double hitPointScale, boolean summoned) {
         this.kind = kind;
         this.world = world;
-        this.boss = kind == EnemyKind.WATCHER;
+        this.boss = kind.boss();
         this.summoned = summoned;
         this.x = x;
         this.y = y;
@@ -218,8 +223,18 @@ public final class Enemy {
         animationTime = 0.0;
     }
 
+    /**
+     * 朝向只影响本体贴图。v2 扩展包没有绘制独立的正面与背面（素材包明确要求不能把
+     * left/right 谎标为 front/back），因此这些物种只按左右翻转表现朝向：
+     * 竖直方向的移动不会把贴图切到不存在的 front/back 帧上。
+     */
     public void setFacingFromVector(double dx, double dy) {
         if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) return;
+        if (!kind.hasFrontBackArt()) {
+            if (Math.abs(dx) < 0.001) return;
+            facing = dx >= 0.0 ? "right" : "left";
+            return;
+        }
         if (Math.abs(dx) >= Math.abs(dy)) facing = dx >= 0.0 ? "right" : "left";
         else facing = dy >= 0.0 ? "front" : "back";
     }
@@ -232,6 +247,63 @@ public final class Enemy {
     public void beginGuard(double seconds) {
         guardRemaining = Math.max(0.0, seconds);
         playAnimation("guard", seconds, true);
+    }
+
+    /**
+     * 起手时登记「前摇期间正面减伤」。
+     *
+     * <p>铲角甲虫抬角顶撞时甲壳朝前、曦刃螳爵架镰时镰臂横在身前，正面挨打会明显变硬，
+     * 但绕到背面照常吃满伤害——所以减免必须带方向，而不是给整只怪加一层护甲。
+     *
+     * @param reduction     正面减伤比例（0.25 / 0.60）
+     * @param arcDegrees    正面护角的总角度
+     * @param facingRadians 护角中轴：起手时锁定的方向
+     */
+    public void beginCastGuard(double reduction, double arcDegrees, double facingRadians) {
+        if (reduction <= 0.0) return;
+        castGuardReduction = Math.min(0.95, reduction);
+        castGuardArcDegrees = Math.max(10.0, arcDegrees);
+        castGuardAngleRadians = facingRadians;
+    }
+
+    /** 收招 / 被打断 / 出招结束：正面减伤随起手动作一起结束。 */
+    public void endCastGuard() {
+        castGuardReduction = 0.0;
+        castGuardArcDegrees = 0.0;
+        castGuardAngleRadians = Double.NaN;
+    }
+
+    public boolean isCastGuarding() {
+        return castGuardReduction > 0.0 && !Double.isNaN(castGuardAngleRadians);
+    }
+
+    public double castGuardReduction() { return castGuardReduction; }
+
+    /** 护角中轴方向（弧度）；未生效时为 {@link Double#NaN}。 */
+    public double castGuardAngleRadians() { return castGuardAngleRadians; }
+
+    /**
+     * 从某个方向打来的伤害要乘的系数。
+     *
+     * @param attackerX 伤害来源的 X（弹体当前位置或玩家位置）
+     * @return 落在正面护角内为 {@code 1 - reduction}，否则 1.0
+     */
+    public double incomingDamageMultiplier(double attackerX, double attackerY) {
+        if (!isCastGuarding()) return 1.0;
+        double dx = attackerX - x;
+        double dy = attackerY - y;
+        if (Math.hypot(dx, dy) < 0.0001) return 1.0;
+        double difference = Math.abs(normaliseAngle(Math.atan2(dy, dx) - castGuardAngleRadians));
+        if (difference > Math.toRadians(castGuardArcDegrees / 2.0)) return 1.0;
+        return 1.0 - castGuardReduction;
+    }
+
+    /** 归一到 [-π, π]。 */
+    private static double normaliseAngle(double radians) {
+        double value = radians % (Math.PI * 2);
+        if (value > Math.PI) value -= Math.PI * 2;
+        if (value < -Math.PI) value += Math.PI * 2;
+        return value;
     }
 
     /** 是否已锁定玩家（索敌成功）。锁定后即使被墙挡住视线也会持续追击。 */
@@ -335,10 +407,10 @@ public final class Enemy {
     }
 
     private static double hitboxCenterOffset(EnemyKind kind) {
-        return kind == EnemyKind.WATCHER ? 92.0 : kind.elite() ? 66.0 : 51.0;
+        return kind.hitboxCenterOffset();
     }
 
     private static double hitboxRadius(EnemyKind kind) {
-        return kind == EnemyKind.WATCHER ? 62.0 : kind.elite() ? 45.0 : 35.0;
+        return kind.hurtRadius();
     }
 }

@@ -65,7 +65,7 @@ class BossSummonTest {
         boss.setPosition(760, 240);
 
         // 血量阶段召唤无视开场冷却：首领一掉血就会开裂隙，测试不必干等 6 秒。
-        boss.damage(16);
+        boss.damage(boss.getMaxHp() * 30 / 100 + 1);
         double opened = runUntil(system, player, navigation, () -> !system.getSummonRifts().isEmpty(), 6.0);
         assertTrue(opened > 0, "首领跌破血量阶段时应当立刻开裂隙");
 
@@ -110,7 +110,7 @@ class BossSummonTest {
         system.enterRoom(room, 7L, player, navigation);
         Enemy boss = system.getEnemies().getFirst();
         boss.setPosition(760, 240);
-        boss.damage(16);
+        boss.damage(boss.getMaxHp() * 30 / 100 + 1);
 
         boolean sawTransformWindup = false;
         for (int frame = 0; frame < 6 * 60 && !sawTransformWindup; frame++) {
@@ -135,7 +135,7 @@ class BossSummonTest {
         Enemy boss = system.getEnemies().getFirst();
         boss.setWorld(WorldType.SHADOW);
         boss.setPosition(760, 240);
-        boss.damage(16);
+        boss.damage(boss.getMaxHp() * 30 / 100 + 1);
 
         boolean sawSummonWindup = false;
         for (int frame = 0; frame < 6 * 60 && !sawSummonWindup; frame++) {
@@ -192,7 +192,7 @@ class BossSummonTest {
                     "场上召唤物加裂隙不能超过上限，实际 " + (system.getSummonedCount() + system.getSummonRifts().size()));
             // 玩家把增援清掉：首领应当隔一段时间再补一波，而不是一次堆满。
             for (Enemy enemy : new ArrayList<>(system.getEnemies())) {
-                if (enemy.isSummoned()) enemy.damage(999);
+                if (enemy.isSummoned()) enemy.damage(enemy.getMaxHp());
             }
         }
 
@@ -248,11 +248,11 @@ class BossSummonTest {
         system.enterRoom(room, 7L, player, navigation);
         Enemy boss = system.getEnemies().getFirst();
         boss.setPosition(760, 240);
-        boss.damage(16);
+        boss.damage(boss.getMaxHp() * 30 / 100 + 1);
 
         assertTrue(runUntil(system, player, navigation, () -> system.getSummonedCount() > 0, 8.0) > 0);
         system.consumeKills();
-        boss.damage(999);
+        boss.damage(boss.getMaxHp());
         runFor(system, player, navigation, 2 * DT);
 
         assertTrue(system.isRoomCleared(), "首领倒下后房间必须清空，否则传送门不会出现");
@@ -270,13 +270,13 @@ class BossSummonTest {
         system.enterRoom(room, 7L, player, navigation);
         Enemy boss = system.getEnemies().getFirst();
         boss.setPosition(760, 240);
-        boss.damage(16);
+        boss.damage(boss.getMaxHp() * 30 / 100 + 1);
 
         assertTrue(runUntil(system, player, navigation, () -> !system.getSummonRifts().isEmpty(), 8.0) > 0,
                 "测试前提：裂隙已经开出来");
         assertEquals(0, system.getSummonedCount());
 
-        boss.damage(999);
+        boss.damage(boss.getMaxHp());
         runFor(system, player, navigation, GameConfig.WATCHER_SUMMON_RIFT_TIME + 0.5);
 
         assertTrue(system.getSummonRifts().isEmpty(), "首领已死，裂隙不能再吐出小怪");
@@ -293,7 +293,7 @@ class BossSummonTest {
         system.enterRoom(room, 7L, player, navigation);
         Enemy boss = system.getEnemies().getFirst();
         boss.setPosition(760, 240);
-        boss.damage(16);
+        boss.damage(boss.getMaxHp() * 30 / 100 + 1);
 
         assertTrue(runUntil(system, player, navigation, () -> system.getSummonedCount() > 0, 8.0) > 0,
                 "测试前提：光界已经放出召唤物");

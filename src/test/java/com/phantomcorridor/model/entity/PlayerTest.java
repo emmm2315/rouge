@@ -2,6 +2,7 @@ package com.phantomcorridor.model.entity;
 
 import com.phantomcorridor.config.GameConfig;
 import com.phantomcorridor.model.EquipmentType;
+import com.phantomcorridor.model.WorldType;
 import com.phantomcorridor.model.combat.DamageType;
 import org.junit.jupiter.api.Test;
 
@@ -237,25 +238,41 @@ class PlayerTest {
     }
 
     @Test
-    void attackBonusIsSplitBetweenEquipmentAndItems() {
-        // 信息面板显示“角色本身”，装备栏显示“装备加成”，两边必须能对上同一个总数。
+    void damageBonusIsSplitBetweenEquipmentAndItems() {
+        // 设计文档的口径：伤害 = 基础伤害 × 段系数 ×（1 + 同类加成之和）。
+        // 面板要把「装备给的那一份」单独显示出来，所以装备与道具的加成要能分别读到。
         Player player = new Player(0, 0);
-        assertEquals(1, player.getAttackDamage());
-        assertEquals(0, player.getAttackBonus());
-        assertEquals(0, player.getEquipmentAttackBonus());
+        assertEquals(Player.BASE_ATTACK_DAMAGE, player.getCurrentBaseDamage(), 1e-9,
+                "基础伤害就是角色面板上的基础攻击力");
+        assertEquals(0.0, player.getDamageBonus(), 1e-9);
+        assertEquals(0.0, player.getEquipmentDamageBonus(), 1e-9);
+        assertEquals(1.0, player.damageMultiplier(WorldType.LIGHT), 1e-9);
 
         player.equip(EquipmentType.DAWN_WAND);
-        assertEquals(1, player.getEquipmentAttackBonus(), "晨曦法杖在光界 +1");
-        assertEquals(1, player.getAttackBonus());
-        assertEquals(2, player.getAttackDamage());
+        assertEquals(0.20, player.getEquipmentDamageBonus(), 1e-9, "晨曦法杖光界 +20%");
+        assertEquals(1.20, player.damageMultiplier(WorldType.LIGHT), 1e-9);
+        // HUD 写的是「这一下会打出多少点」：基础 10 × 1.20 = 12。
+        assertEquals("12", player.getDamageText());
 
-        player.equip(EquipmentType.DAWN_WAND);
-        assertEquals(2, player.getEquipmentAttackBonus(), "同名法杖的加成叠加");
-        assertEquals(3, player.getAttackDamage());
+        player.equip(EquipmentType.DAWN_SEAL);
+        assertEquals(0.30, player.getEquipmentDamageBonus(), 1e-9, "圣印的 +10% 与法杖相加");
 
+        // 光界装备在影界不提供加成，也不该留下任何残余。
         player.toggleWorld();
-        assertEquals(0, player.getEquipmentAttackBonus(), "光界装备在影界不提供加成");
-        assertEquals(1, player.getAttackDamage());
+        assertEquals(0.0, player.getEquipmentDamageBonus(), 1e-9, "光界装备在影界不提供加成");
+        assertEquals(1.0, player.damageMultiplier(WorldType.SHADOW), 1e-9);
+    }
+
+    @Test
+    void focusLensAddsTwentyFivePercentLightDamageAndSlowsOnlyLightAttacks() {
+        Player player = new Player(0, 0);
+        player.equip(EquipmentType.FOCUS_LENS);
+
+        assertEquals(0.25, player.getEquipmentDamageBonus(), 1e-9);
+        assertEquals(1.15, player.getAttackCooldownMultiplier(WorldType.LIGHT), 1e-9,
+                "凝光透镜的光界攻击间隔 ×1.15");
+        assertEquals(1.0, player.getAttackCooldownMultiplier(WorldType.SHADOW), 1e-9,
+                "影界既没有伤害加成，就不该白背一个间隔惩罚");
     }
 
     @Test

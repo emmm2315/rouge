@@ -52,6 +52,12 @@ public final class Player {
     private Shield shield;
     private final List<ItemType> items = new ArrayList<>();
     private final List<EquipmentType> equipment = new ArrayList<>();
+    /** 相位陀螺：切界后攻速窗口的剩余时间（秒）。 */
+    private double gyroscopeRemaining;
+    /** 夜行披风：影斩后加速的剩余时间（秒）。 */
+    private double nightstepRemaining;
+    /** 曜纹披肩：光界减伤的冷却剩余时间（秒）。 */
+    private double sunweaveCooldownRemaining;
 
     public Player(double x, double y) {
         reset(x, y);
@@ -87,6 +93,9 @@ public final class Player {
         this.hitKnockbackX = 0.0;
         this.hitKnockbackY = 0.0;
         this.shield = new Shield(shieldCapacity());
+        this.gyroscopeRemaining = 0.0;
+        this.nightstepRemaining = 0.0;
+        this.sunweaveCooldownRemaining = 0.0;
     }
 
     /**
@@ -99,8 +108,11 @@ public final class Player {
     public double movementSpeed() {
         double speed = GameConfig.PLAYER_BASE_SPEED;
         if (currentWorld != WorldType.SHADOW) return speed;
-        return speed * GameConfig.SHADOW_SPEED_MULTIPLIER
+        speed *= GameConfig.SHADOW_SPEED_MULTIPLIER
                 * (1.0 + equipmentCount(EquipmentType.DUSK_CLOAK) * 0.10);
+        // 夜行披风：影斩后的短时加速（不叠层，只刷新时间）。
+        if (nightstepRemaining > 0.0) speed *= GameConfig.NIGHTSTEP_CLOAK_SPEED;
+        return speed;
     }
 
     /**
@@ -291,6 +303,7 @@ public final class Player {
                                 boolean shifting) {
         hitInvulnerability = Math.max(0.0, hitInvulnerability - Math.max(0.0, dt));
         hitFlashRemaining = Math.max(0.0, hitFlashRemaining - Math.max(0.0, dt));
+        updateTemporaryEffects(dt);
         animationTime += Math.max(0.0, dt);
         // 冲刺中朝向锁在冲刺方向上：拖尾与角色朝向必须一致，否则拖尾会"横着飘"。
         double lookX = isDashing() ? dashDirectionX : movementX;
@@ -359,6 +372,7 @@ public final class Player {
      */
     public DamageResult takeDamage(double damage, DamageType type, double sourceX, double sourceY) {
         if (damage <= 0.0 || isDashing() || hitInvulnerability > 0.0 || hp <= 0) return null;
+        damage = applySunweaveMitigation(damage);
         // Shield.absorb 返回的是“护盾没挡下、要继续打进生命值”的溢出量。
         double overflow = shield.absorb(damage);
         double absorbed = damage - overflow;
@@ -371,6 +385,37 @@ public final class Player {
         restorePhaseEnergy(GameConfig.PHASE_ENERGY_ON_HIT);
         return new DamageResult(absorbed, healthLost, shield.getCurrent(),
                 type == null ? DamageType.PHYSICAL : type);
+    }
+
+    /**
+     * 曜纹披肩：光界受到一次有效伤害时降低 30%，随后进入 6 秒冷却。
+     *
+     * <p>三条约束来自设计文档 §五-09：
+     * <ul>
+     *   <li>只在光界生效；<b>影界不消耗已经就绪的减伤机会</b>，所以影界挨打时直接原样返回；</li>
+     *   <li>冷却只随未暂停的游戏时间推进，切界不重置；</li>
+     *   <li>最终实际伤害仍至少为 1 点——减伤不新增免疫，所以这里用 {@code max(1, ...)} 兜底。</li>
+     * </ul>
+     */
+    private double applySunweaveMitigation(double damage) {
+        if (currentWorld != WorldType.LIGHT) return damage;
+        int count = equipmentCount(EquipmentType.SUNWEAVE_MANTLE);
+        if (count == 0 || sunweaveCooldownRemaining > 0.0) return damage;
+        // 同名多件只按“有没有就绪”算一次：减伤是状态而不是可叠加的数值。
+        sunweaveCooldownRemaining = GameConfig.SUNWEAVE_MANTLE_COOLDOWN;
+        double reduced = damage * (1.0 - GameConfig.SUNWEAVE_MANTLE_REDUCTION);
+        // 「至少 1 点」是在伤害真正落到生命值时保证的，所以只保证不被减到 0 以下。
+        return Math.max(1.0, reduced);
+    }
+
+    /** 曜纹披肩的冷却剩余时间（秒）；就绪时为 0。 */
+    public double getSunweaveCooldownRemaining() { return sunweaveCooldownRemaining; }
+
+    /** 曜纹披肩此刻是否能挡下这一击。 */
+    public boolean isSunweaveReady() {
+        return currentWorld == WorldType.LIGHT
+                && equipmentCount(EquipmentType.SUNWEAVE_MANTLE) > 0
+                && sunweaveCooldownRemaining <= 0.0;
     }
 
     public DamageResult takeDamage(double damage, DamageType type) {
@@ -451,48 +496,227 @@ public final class Player {
     public double getPhaseEnergy() { return phaseEnergy; }
     public int getAttackCharges() { return attackCharges; }
     public int getMaxAttackCharges() { return maxAttackCharges; }
-    /** 角色的基础攻击力（不含任何加成）：HUD 用它把“本身”和“装备加上去的”分开显示。 */
-    public static final int BASE_ATTACK_DAMAGE = 1;
+    /**
+     * 角色的基础攻击力（不含任何加成）：HUD 用它把“本身”和“装备加上去的”分开显示。
+     *
+     * <p><b>战斗刻度重构</b>：旧值是 1，而敌人防御最多能到 3——也就是说在最深几层，
+     * 一次基础攻击被防御吃光后只能靠「至少 1 点」的兜底打出 1 点，防御、武器系数、
+     * 伤害加成全部失去意义（首领也只有几十点血，一局下来全是 1 和 2 的数字）。
+     * 现在基础攻击是 10，敌人生命同步上了一个量级（小怪几十、精英上百、首领数百），
+     * 防御回到「每次减免 1～3 点」的本意，也就是一次基础攻击的 10%～30%，
+     * 武器系数（0.45～1.60）与装备加成重新变成可读的百分比。
+     */
+    public static final int BASE_ATTACK_DAMAGE = 10;
 
-    public int getAttackDamage() {
-        return BASE_ATTACK_DAMAGE + getAttackBonus();
+    /**
+     * 某界的基础单次攻击伤害（设计文档里的 {@code D光 / D影}）。
+     *
+     * <p>所有武器系数都以它为基准：三叉杖每发 {@code 0.45 D光}、重剑 {@code 1.60 D影}。
+     */
+    public double baseDamage(WorldType world) {
+        return BASE_ATTACK_DAMAGE;
     }
 
     /**
-     * 当前攻击力加成（道具 + 装备，且已经按当前世界结算）。
+     * 当前世界的基础伤害。
      *
-     * <p>拆出来是为了让信息面板（角色本身）与装备栏（装备加成）能各说各的那一半，
-     * 两个面板显示同一个合计数时玩家分不清哪部分是自己的、哪部分是捡来的。
+     * @see #baseDamage(WorldType)
      */
-    public int getAttackBonus() {
-        return getItemAttackBonus() + getEquipmentAttackBonus();
+    public double getCurrentBaseDamage() {
+        return baseDamage(currentWorld);
     }
 
-    /** 攻击力加成里来自装备的那一部分（道具那部分 = {@link #getAttackBonus()} 减去它）。 */
-    public int getEquipmentAttackBonus() {
-        int bonus = equipment.stream().mapToInt(item -> item == EquipmentType.DAWN_WAND && currentWorld == WorldType.LIGHT ? 1
-                : item == EquipmentType.SHADOW_FANG && currentWorld == WorldType.SHADOW ? 1
-                : item == EquipmentType.RIFT_TWINBLADE || item == EquipmentType.DAWN_SEAL && currentWorld == WorldType.LIGHT ? 1
-                : 0).sum();
-        bonus += equipment.stream().mapToInt(item -> switch (item) {
-            case PRISM_FAN_WAND, SUNLANCE, MIRROR_ORB, SOLAR_BURST_STAFF ->
-                    currentWorld == WorldType.LIGHT ? 1 : 0;
-            case CRESCENT_REAPER, RETURNING_FANG, NIGHTFALL_GREATSWORD ->
-                    currentWorld == WorldType.SHADOW ? 1 : 0;
-            case ECLIPSE_RELAY -> 1;
-            case FOCUS_LENS -> currentWorld == WorldType.LIGHT ? 1 : 0;
-            case HUNTERS_FANG -> currentWorld == WorldType.SHADOW ? 1 : 0;
-            default -> 0;
-        }).sum();
+    /** 该界的伤害加成（同类相加的百分比之和，0.45 表示 +45%）。 */
+    public double damageBonus(WorldType world) {
+        return equipmentDamageBonus(world) + itemDamageBonus(world);
+    }
+
+    /** 当前世界的伤害加成。 */
+    public double getDamageBonus() {
+        return damageBonus(currentWorld);
+    }
+
+    /**
+     * 该界最终的防御前伤害倍率：{@code 1 + 同类加成之和}。
+     *
+     * <p>设计文档 §三 的口径是「单个伤害包的防御前伤害 = 基础伤害 × 段系数 ×（1 + 同类加成之和）」，
+     * 所以这里给的是那个括号，武器自己的段系数在 {@link com.phantomcorridor.model.combat.AttackProfile} 里。
+     */
+    public double damageMultiplier(WorldType world) {
+        return 1.0 + damageBonus(world);
+    }
+
+    /** 装备提供的该界伤害加成。一件装备只在它所属的那一界计入。 */
+    public double equipmentDamageBonus(WorldType world) {
+        double bonus = 0.0;
+        for (EquipmentType item : equipment) {
+            bonus += switch (item) {
+                // 光界：晨曦法杖 +20%、晨曦圣印 +10%。
+                case DAWN_WAND -> world == WorldType.LIGHT ? 0.20 : 0.0;
+                case DAWN_SEAL -> world == WorldType.LIGHT ? 0.10 : 0.0;
+                // 影牙短刃：影界 +20%。
+                case SHADOW_FANG -> world == WorldType.SHADOW ? 0.20 : 0.0;
+                // 双界武器两界都 +10%。
+                case RIFT_TWINBLADE -> 0.10;
+                // 凝光透镜：光界全部玩家攻击 +25%（含饰品附加光伤）。
+                case FOCUS_LENS -> world == WorldType.LIGHT ? 0.25 : 0.0;
+                default -> 0.0;
+            };
+        }
         return bonus;
     }
 
-    /** 攻击力加成里来自道具的那一部分。 */
-    public int getItemAttackBonus() {
-        return items.stream().mapToInt(item -> item == ItemType.DUAL || item == ItemType.UNIVERSAL
-                || (currentWorld == WorldType.LIGHT && item == ItemType.LIGHT)
-                || (currentWorld == WorldType.SHADOW && item == ItemType.SHADOW) ? 1 : 0).sum();
+    /** 道具提供的该界伤害加成。 */
+    public double itemDamageBonus(WorldType world) {
+        double bonus = 0.0;
+        for (ItemType item : items) {
+            bonus += switch (item) {
+                case UNIVERSAL -> world == WorldType.LIGHT ? 0.25 : 0.0;
+                case DUAL -> 0.25;
+                case LIGHT -> world == WorldType.LIGHT ? 0.25 : 0.0;
+                case SHADOW -> world == WorldType.SHADOW ? 0.25 : 0.0;
+            };
+        }
+        return bonus;
     }
+
+    /**
+     * 攻击力加成（道具 + 装备，按当前世界结算），保留旧入口给 HUD 与既有测试使用。
+     *
+     * <p>数值口径已改成百分比的整数近似：{@code round(基础伤害 × 加成之和)}，
+     * 这样「凝光透镜 +25%」在一击 1 点伤害的刻度下正好读成 +0（不足一点），
+     * 而真正的伤害结算走 {@link #damageMultiplier(WorldType)}，不会因为取整丢掉那 25%。
+     */
+    public int getAttackBonus() {
+        return (int) Math.round(BASE_ATTACK_DAMAGE * getDamageBonus());
+    }
+
+    /**
+     * HUD 用的伤害文本：{@code 1 ×1.45}。
+     *
+     * <p>改百分比口径以后「+1」这种整数加成会经常显示成 +0，读不出透镜那 25%，
+     * 所以直接把最终倍率写出来。
+     */
+    public String damageText(WorldType world) {
+        return formatMultiplier(baseDamage(world) * damageMultiplier(world));
+    }
+
+    /** 当前世界的伤害文本。 */
+    public String getDamageText() {
+        return damageText(currentWorld);
+    }
+
+    private static String formatMultiplier(double damage) {
+        return Math.abs(damage - Math.rint(damage)) < 0.005
+                ? String.valueOf((int) Math.rint(damage))
+                : String.format("%.2f", damage);
+    }
+
+    /** 装备提供的伤害加成（HUD 装备栏那一行用）。 */
+    public double getEquipmentDamageBonus() {
+        return equipmentDamageBonus(currentWorld);
+    }
+
+    /**
+     * 该界的攻击间隔倍率（饰品 + 临时效果，设计文档 §三 的「饰品间隔倍率 × 临时效果间隔倍率」）。
+     *
+     * <ul>
+     *   <li><b>凝光透镜</b>：光界攻击间隔 ×1.15。<b>只在光界生效</b>——它的伤害加成同样只给光界，
+     *       如果间隔惩罚也压到影界，就等于让影界玩家白背一个负面效果；</li>
+     *   <li><b>相位陀螺</b>：成功切界后 2 秒内，新世界的攻击间隔 ×0.85。</li>
+     * </ul>
+     */
+    public double getAttackCooldownMultiplier(WorldType world) {
+        double multiplier = 1.0;
+        if (world == WorldType.LIGHT) {
+            multiplier *= Math.pow(1.15, equipmentCount(EquipmentType.FOCUS_LENS));
+        }
+        return multiplier * gyroscopeMultiplier();
+    }
+
+    /**
+     * 相位陀螺的临时攻速窗口倍率。
+     *
+     * <p>切界成功才开窗、持续 2 秒，且**只作用于此后启动的新攻击**——已经开始的前摇与
+     * 飞行中的弹体不受影响（间隔是在下一轮出手时才读这个值）。
+     */
+    private double gyroscopeMultiplier() {
+        if (gyroscopeRemaining <= 0.0 || equipmentCount(EquipmentType.PHASE_GYROSCOPE) == 0) return 1.0;
+        return Math.pow(0.85, equipmentCount(EquipmentType.PHASE_GYROSCOPE));
+    }
+
+    /** 相位陀螺的攻速窗口剩余时间（秒）；0 表示没在窗口里。 */
+    public double getGyroscopeRemaining() { return gyroscopeRemaining; }
+
+    /** 是否正处在相位陀螺的攻速窗口里（HUD/视觉表现可用）。 */
+    public boolean isGyroscopeActive() { return gyroscopeMultiplier() < 1.0; }
+
+    /**
+     * 记录一次成功切界：打开相位陀螺的攻速窗口。
+     *
+     * <p>重复获得只刷新持续时间、不叠层（窗口长度是固定 2 秒，不看件数）；
+     * 没装陀螺时什么都不做，免得白占一个计时器。
+     */
+    public void onWorldShifted() {
+        if (equipmentCount(EquipmentType.PHASE_GYROSCOPE) > 0) {
+            gyroscopeRemaining = GameConfig.PHASE_GYROSCOPE_WINDOW;
+        }
+        // 切入光界会结束夜行披风的加速（它只在影界出刀后触发）。
+        if (currentWorld == WorldType.LIGHT) nightstepRemaining = 0.0;
+    }
+
+    /**
+     * 夜行披风：每次影界攻击**实际释放**时给 0.45 秒的 +18% 移速。
+     *
+     * <p>重复触发刷新时间、不叠层；切界或卸下立即结束。重剑的前摇不算释放，
+     * 所以由攻击系统在真正结算那一刻调用（见 {@code PlayerAttackSystem}）。
+     */
+    public void onShadowAttackReleased() {
+        if (equipmentCount(EquipmentType.NIGHTSTEP_CLOAK) > 0) {
+            nightstepRemaining = GameConfig.NIGHTSTEP_CLOAK_DURATION;
+        }
+    }
+
+    /** 夜行披风的加速剩余时间（秒）。 */
+    public double getNightstepRemaining() { return nightstepRemaining; }
+
+    /**
+     * 推进装备带来的临时效果计时（每帧调用）。
+     *
+     * <p>计时全部由 {@code dt} 推进，所以暂停时不会偷偷走完——见需求文档
+     * 「暂停不推进特效或冷却」。卸下装备立即结束效果，不留残余加成。
+     */
+    private void updateTemporaryEffects(double dt) {
+        double step = Math.max(0.0, dt);
+        gyroscopeRemaining = Math.max(0.0, gyroscopeRemaining - step);
+        sunweaveCooldownRemaining = Math.max(0.0, sunweaveCooldownRemaining - step);
+        // 夜行披风只在影界有效；切入光界立即结束（卸下同理）。
+        if (currentWorld == WorldType.LIGHT || equipmentCount(EquipmentType.NIGHTSTEP_CLOAK) == 0) {
+            nightstepRemaining = 0.0;
+        } else {
+            nightstepRemaining = Math.max(0.0, nightstepRemaining - step);
+        }
+    }
+
+    /** 道具提供的伤害加成。 */
+    public double getItemDamageBonus() {
+        return itemDamageBonus(currentWorld);
+    }
+
+    /** 当前世界的基础伤害（旧的整数入口，等价于 {@code (int) getCurrentBaseDamage()}）。 */
+    public int getAttackDamage() {
+        return (int) Math.round(getCurrentBaseDamage() * damageMultiplier(currentWorld));
+    }
+
+    /**
+     * 战斗里的最终伤害乘区（难度倍率由 {@code EnemySystem} 在结算时乘上）。
+     *
+     * @see #damageMultiplier(WorldType)
+     */
+    public double getAttackDamageMultiplier() {
+        return damageMultiplier(currentWorld);
+    }
+
     /**
      * 装备栏里是否有这件装备（数量无关的“有没有”查询）。
      *

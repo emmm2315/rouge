@@ -215,9 +215,14 @@ class EnemySystemTest {
                     // 只统计开局就在场的这几种敌人：首领中途会召唤增援，召唤物的攻击不该被算成
                     // “开局的敌人参战了”。战斗房不会召唤，首领房开局的种类是 WATCHER，
                     // 而召唤出来的只会是灯灵/影狼/法师，不会和开局的种类撞车。
+                    // v2 扩展包里有相当一部分招式不是弹体而是「先画在地上的预警」
+                    // （甲虫顶撞、扇面、环带、地面标记），所以预警实体同样算“开火了”。
                     system.getAttacks().stream()
                             .filter(attack -> kindsInPlayerWorld.contains(attack.getSource()))
                             .forEach(attack -> kindsThatFired.add(attack.getSource()));
+                    system.getTelegraphs().stream()
+                            .filter(telegraph -> kindsInPlayerWorld.contains(telegraph.source()))
+                            .forEach(telegraph -> kindsThatFired.add(telegraph.source()));
                     for (Enemy enemy : sameWorldEnemies) {
                         closestDistances.merge(enemy, distance(player, enemy), Math::min);
                     }

@@ -3,6 +3,8 @@ package com.phantomcorridor.model;
 import com.phantomcorridor.config.AppConfig;
 import com.phantomcorridor.config.GameConfig;
 import com.phantomcorridor.model.effect.WorldShiftSystem;
+import com.phantomcorridor.model.entity.Enemy;
+import com.phantomcorridor.model.entity.EnemyKind;
 import com.phantomcorridor.model.entity.Player;
 import com.phantomcorridor.model.combat.PlayerAttackSystem;
 import com.phantomcorridor.model.combat.EnemyProjectileSystem;
@@ -40,6 +42,8 @@ public final class GameSession {
     // private boolean combatActive;
     private boolean interactRequested;
     private boolean dashRequested;
+    /** 上一帧影斩的释放次数：用来在“这一刀刚落下”的那一帧触发夜行披风。 */
+    private int lastMeleeReleaseCount;
 
     public void newRun() { newRun(""); }
 
@@ -142,11 +146,17 @@ public final class GameSession {
         // 房间内容只在第一次进入时生成，进出不会重刷；这里只维护“待确认商品”的有效性。
         roomContent.update(navigation.getCurrentRoom(), player);
         attackSystem.update(dt, navigation);
+        // 影斩实际落下的那一刻才触发夜行披风：前摇中的那一刀不算，切界/卸下时它自己会失效。
+        if (attackSystem.getMeleeReleaseCount() != lastMeleeReleaseCount) {
+            lastMeleeReleaseCount = attackSystem.getMeleeReleaseCount();
+            player.onShadowAttackReleased();
+        }
         enemies.update(dt, player, attackSystem, navigation);
         applyHitKnockback();
         // 首领起手召唤时给一条即时提示：裂隙本身画在地上，但玩家常常正盯着首领看。
         if (enemies.consumeSummonCalls() > 0) {
-            roomAnnouncement = "守望者撕开裂隙 · 召唤增援";
+            EnemyKind summoner = getBossKind();
+            roomAnnouncement = (summoner == null ? "首领" : summoner.displayName()) + "撕开裂隙 · 召唤增援";
             roomAnnouncementRemaining = 2.0;
         }
         int kills = enemies.consumeKills();
@@ -195,8 +205,13 @@ public final class GameSession {
         player.boostAttackChargeRecovery(GameConfig.WORLD_SWITCH_CHARGE_BOOST_DURATION);
         if (worldShift.consumePulse()) {
             enemyProjectiles.clearWithin(player.getX(), player.getY(), GameConfig.PHASE_PULSE_RADIUS);
+            // 相位脉冲同样要能打散玩家身边真正在飞的敌方弹幕（孢子、丝矢、炮弹……），
+            // 而旧接口只清了一张早已不用的弹体表；可清与否由招式的 pulseClearable 决定。
+            enemies.clearPulseClearableWithin(player.getX(), player.getY(), GameConfig.PHASE_PULSE_RADIUS);
             phasePulseVisibleRemaining = GameConfig.PHASE_PULSE_VISIBLE_TIME;
         }
+        // 切界成功：打开相位陀螺的攻速窗口，并结束夜行披风的影界加速。
+        player.onWorldShifted();
         enemies.onWorldChanged(player.getCurrentWorld());
         return true;
     }
@@ -260,6 +275,23 @@ public final class GameSession {
 
     /** 守望者裂隙闪现的视觉残留；没有时返回 null。 */
     public EnemySystem.BlinkFlash getBlinkFlash() { return enemies.getBlinkFlash(); }
+
+    /**
+     * 当前场上的首领；没有首领（或首领已被击败）时返回 {@code null}。
+     *
+     * <p>渲染层用它显示 Boss 名与专属血条——一层一个不同的首领，玩家需要知道自己在打谁。
+     */
+    public Enemy getBoss() {
+        return enemies.getEnemies().stream()
+                .filter(enemy -> enemy.isBoss() && !enemy.isDead())
+                .findFirst().orElse(null);
+    }
+
+    /** 当前首领的物种；没有时返回 {@code null}。 */
+    public EnemyKind getBossKind() {
+        Enemy boss = getBoss();
+        return boss == null ? null : boss.getKind();
+    }
 
     /** 受击飘字（玩家挨打、敌人掉血）：渲染层只读地画在头顶。 */
     public List<EnemySystem.DamageFlash> getDamageFlashes() { return enemies.getDamageFlashes(); }
@@ -364,9 +396,15 @@ public final class GameSession {
         }
     }
 
-    /** 进入初始房间时提示层数，其余房间只报类型。 */
+    /** 进入初始房间时提示层数，其余房间只报类型；Boss 房连首领名一起报。 */
     private String roomAnnouncement(Room room) {
-        return room.type() == RoomType.ENTRANCE ? floorAnnouncement() : roomTypeLabel(room.type());
+        if (room.type() == RoomType.ENTRANCE) return floorAnnouncement();
+        if (room.type() == RoomType.BOSS) {
+            // 一层一个不同的首领：进房就得让玩家知道这次打的是谁。
+            EnemyKind boss = getBossKind();
+            return boss == null ? roomTypeLabel(RoomType.BOSS) : "Boss 房 · " + boss.displayName();
+        }
+        return roomTypeLabel(room.type());
     }
 
     private String floorAnnouncement() {

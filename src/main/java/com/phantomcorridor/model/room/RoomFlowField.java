@@ -195,6 +195,40 @@ public final class RoomFlowField {
         return -1;
     }
 
+    /**
+     * 距离场树上「更靠近玩家一格」的格心，按步数从少到多排列（最多 4 个）。
+     *
+     * <p>给脱困兜底用：敌人可能卡在「格心走得通、它自己的身位却迈不开步」的粗网格缝隙里
+     * （格边长 {@link RoomConfig#NAV_CELL_SIZE} 像素），此时沿梯度给不出可用方向。
+     * 直接把它挪到树上前驱格的格心，是唯一能保证「挪过去之后确实离玩家更近」的做法。
+     *
+     * @return 候选落点坐标；当前格已经是最优（或整块区域都不可达）时返回空列表
+     */
+    public java.util.List<double[]> progressTargets(double x, double y) {
+        int column = Math.min(columns - 1, Math.max(0, columnOf(x)));
+        int row = Math.min(rows - 1, Math.max(0, rowOf(y)));
+        int current = steps[index(column, row)];
+        java.util.List<int[]> cells = new java.util.ArrayList<>();
+        for (int offsetX = -1; offsetX <= 1; offsetX++) {
+            for (int offsetY = -1; offsetY <= 1; offsetY++) {
+                if (offsetX == 0 && offsetY == 0) continue;
+                int neighbourColumn = column + offsetX;
+                int neighbourRow = row + offsetY;
+                if (!inside(neighbourColumn, neighbourRow)) continue;
+                int value = steps[index(neighbourColumn, neighbourRow)];
+                if (value == UNREACHABLE || value >= current) continue;
+                cells.add(new int[]{neighbourColumn, neighbourRow, value});
+            }
+        }
+        cells.sort(java.util.Comparator.comparingInt(cell -> cell[2]));
+        java.util.List<double[]> targets = new java.util.ArrayList<>();
+        for (int[] cell : cells) {
+            targets.add(new double[]{centerX(cell[0]), centerY(cell[1])});
+            if (targets.size() >= 4) break;
+        }
+        return targets;
+    }
+
     private boolean inside(int column, int row) {
         return column >= 0 && column < columns && row >= 0 && row < rows;
     }
