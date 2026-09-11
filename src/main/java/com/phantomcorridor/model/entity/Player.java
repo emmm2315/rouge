@@ -28,6 +28,8 @@ public final class Player {
     private int attackCharges;
     private int maxAttackCharges;
     private double attackChargeRecoveryTimer;
+    /** 切界后攻击充能恢复加速的剩余时间（秒），期间蓝条回复速度翻倍。 */
+    private double attackChargeBoostRemaining;
     private WorldType currentWorld;
     private PlayerAnimationState animationState;
     private double animationTime;
@@ -64,6 +66,7 @@ public final class Player {
         this.maxAttackCharges = GameConfig.ATTACK_CHARGE_MAX;
         this.attackCharges = maxAttackCharges;
         this.attackChargeRecoveryTimer = 0.0;
+        this.attackChargeBoostRemaining = 0.0;
         this.currentWorld = WorldType.LIGHT;
         this.animationState = PlayerAnimationState.IDLE;
         this.animationTime = 0.0;
@@ -185,9 +188,27 @@ public final class Player {
     }
 
     public void restoreAttackCharges(int amount) { attackCharges = Math.min(maxAttackCharges, attackCharges + Math.max(0, amount)); }
+
+    /**
+     * 触发切界后的攻击充能回复加速：持续 {@link GameConfig#WORLD_SWITCH_CHARGE_BOOST_DURATION} 秒。
+     *
+     * <p>切界会清空相位能量，玩家常在没攻击充能时切界回能；这段时间蓝条回复翻倍，
+     * 缩短「切界等回能」的空窗。重复触发只延长到更大值，不会叠加。
+     */
+    public void boostAttackChargeRecovery(double seconds) {
+        attackChargeBoostRemaining = Math.max(attackChargeBoostRemaining, Math.max(0.0, seconds));
+    }
+
+    /** 切界后攻击充能回复加速的剩余时间（秒）；0 表示已结束。 */
+    public double getAttackChargeBoostRemaining() { return attackChargeBoostRemaining; }
+
     public void updateAttackCharges(double dt) {
+        double step = Math.max(0.0, dt);
+        attackChargeBoostRemaining = Math.max(0.0, attackChargeBoostRemaining - step);
+        double speed = attackChargeBoostRemaining > 0.0
+                ? GameConfig.WORLD_SWITCH_CHARGE_BOOST_MULTIPLIER : 1.0;
         if (attackCharges >= maxAttackCharges) { attackChargeRecoveryTimer = 0.0; return; }
-        attackChargeRecoveryTimer += Math.max(0.0, dt);
+        attackChargeRecoveryTimer += step * speed;
         while (attackChargeRecoveryTimer >= GameConfig.ATTACK_CHARGE_RECOVERY_TIME
                 && attackCharges < maxAttackCharges) {
             attackCharges++;

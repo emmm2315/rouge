@@ -177,4 +177,35 @@ class PlayerTest {
         assertNull(player.takeDamage(5.0, DamageType.SHADOW));
         assertEquals(0, player.getHp());
     }
+
+    @Test
+    void worldShiftBoostDoublesAttackChargeRecovery() {
+        // 同样把蓝条打空，切界加速期间同样时长应多回一发。
+        Player normal = drainedOfCharges();
+        Player boosted = drainedOfCharges();
+        boosted.boostAttackChargeRecovery(GameConfig.WORLD_SWITCH_CHARGE_BOOST_DURATION);
+
+        double dt = GameConfig.ATTACK_CHARGE_RECOVERY_TIME;   // 正常速度下刚好回满一发
+        normal.updateAttackCharges(dt);
+        boosted.updateAttackCharges(dt);
+
+        assertEquals(1, normal.getAttackCharges(), "正常速度下这段时间应只回一发");
+        assertEquals(2, boosted.getAttackCharges(), "切界加速期间同样时间应回满两发");
+    }
+
+    @Test
+    void worldShiftBoostExpiresAfterItsDuration() {
+        Player player = drainedOfCharges();
+        player.boostAttackChargeRecovery(GameConfig.WORLD_SWITCH_CHARGE_BOOST_DURATION);
+
+        player.updateAttackCharges(GameConfig.WORLD_SWITCH_CHARGE_BOOST_DURATION + 0.01);
+
+        assertEquals(0.0, player.getAttackChargeBoostRemaining(), 1e-9, "加速应在时长结束后清零");
+    }
+
+    private static Player drainedOfCharges() {
+        Player player = new Player(0, 0);
+        while (player.getAttackCharges() > 0) player.consumeAttackCharge();
+        return player;
+    }
 }
