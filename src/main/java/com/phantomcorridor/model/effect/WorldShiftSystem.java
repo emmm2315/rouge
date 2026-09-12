@@ -3,7 +3,7 @@ package com.phantomcorridor.model.effect;
 import com.phantomcorridor.config.GameConfig;
 import com.phantomcorridor.model.entity.Player;
 
-/** 世界切换规则：满能量、冷却、切换消耗以及一次性相位脉冲。 */
+/** 双档切界：普通切界减速，满能量切界消耗能量并提供脉冲与无敌。 */
 public final class WorldShiftSystem {
 
     private double cooldownRemaining;
@@ -19,14 +19,15 @@ public final class WorldShiftSystem {
     }
 
     public boolean tryShift(Player player) {
-        if (cooldownRemaining > 0.0
-                || player.getPhaseEnergy() < GameConfig.PHASE_ENERGY_PER_SWITCH) {
+        if (cooldownRemaining > 0.0 || player.getHp() <= 0) {
             return false;
         }
+        boolean empowered = player.getPhaseEnergy() >= GameConfig.PHASE_ENERGY_PER_SWITCH;
         player.toggleWorld();
-        player.consumePhaseEnergy(GameConfig.PHASE_ENERGY_PER_SWITCH);
+        if (empowered) player.consumePhaseEnergy(GameConfig.PHASE_ENERGY_PER_SWITCH);
+        player.applyShiftProtection(empowered);
         cooldownRemaining = GameConfig.WORLD_SWITCH_COOLDOWN;
-        pulsePending = true;
+        pulsePending = empowered;
         return true;
     }
 

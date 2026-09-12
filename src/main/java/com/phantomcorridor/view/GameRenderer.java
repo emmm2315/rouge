@@ -249,9 +249,8 @@ public final class GameRenderer {
      */
     private void drawSummonRifts(GraphicsContext g, GameSession session, WorldType currentWorld) {
         for (SummonRift rift : session.getSummonRifts()) {
-            if (rift.world() != currentWorld) continue;
             double progress = rift.progress();
-            String form = currentWorld == WorldType.LIGHT ? "light" : "shadow";
+            String form = rift.world() == WorldType.LIGHT ? "light" : "shadow";
             double size = 150.0 + 60.0 * progress;
             Image telegraph = animationFrame(telegraphFrames(form, "spawn_circle"),
                     rift.age(), rift.duration(), false, 4.0);
@@ -265,7 +264,7 @@ public final class GameRenderer {
                     0.0, 120.0 + 110.0 * progress, rift.age(), rift.duration());
             // 预警素材那 4 帧只是把 r=100/128 的圈逐渐点亮、加粗，本身不会收缩；
             // 这里再补一道从预警圈收拢到孔隙的环，让“还要多久出怪”一眼可见。
-            Color ring = currentWorld == WorldType.LIGHT ? LIGHT_GOLD : SHADOW_VIOLET;
+            Color ring = rift.world() == WorldType.LIGHT ? LIGHT_GOLD : SHADOW_VIOLET;
             double warningRadius = size * 0.39;
             double radius = warningRadius * (1.0 - progress) + 26.0;
             g.setStroke(Color.color(ring.getRed(), ring.getGreen(), ring.getBlue(), 0.35 + 0.5 * progress));
@@ -300,9 +299,11 @@ public final class GameRenderer {
     /** 非当前世界的敌人及攻击完全不绘制，与模型的同界碰撞规则保持一致。 */
     private void drawEnemies(GraphicsContext g, GameSession session, WorldType currentWorld) {
         List<Enemy> visible = session.getEnemies().getEnemies().stream()
-                .filter(enemy -> enemy.getWorld() == currentWorld).sorted(Comparator.comparingDouble(Enemy::getY)).toList();
+                .sorted(Comparator.comparingDouble(Enemy::getY)).toList();
         for (Enemy enemy : visible) {
-            Image[] frames = enemyFrames(enemy, currentWorld == WorldType.LIGHT ? "light" : "shadow");
+            g.save();
+            g.setGlobalAlpha(1.0);
+            Image[] frames = enemyFrames(enemy, enemy.getWorld() == WorldType.LIGHT ? "light" : "shadow");
             Image body = animationFrame(frames, enemy.getAnimationTime(), enemy.getAnimationDuration(), enemy.isAnimationLooping(), 6.0);
             double size = displayWidth(enemy.getKind());
             double x = Math.rint(enemy.getX() - size / 2.0);
@@ -315,7 +316,16 @@ public final class GameRenderer {
                 g.setFill(enemy.getWorld() == WorldType.LIGHT ? LIGHT_GOLD : SHADOW_VIOLET);
                 g.fillRect(x, enemy.getY() - size / 2.0, size, size);
             }
-            drawEnemyHealth(g, enemy, currentWorld == WorldType.LIGHT ? LIGHT_GOLD : SHADOW_VIOLET);
+            drawEnemyHealth(g, enemy, enemy.getWorld() == WorldType.LIGHT ? LIGHT_GOLD : SHADOW_VIOLET);
+            g.restore();
+            g.setFill(Color.WHITE);
+            g.setFont(Font.font("Microsoft YaHei UI", 11));
+            g.fillText(enemy.getKind().affinity().label(), enemy.getX() - 24, enemy.getHitboxCenterY() - 50);
+            if (enemy.getScorchStacks() > 0) {
+                g.setFill(LIGHT_GOLD);
+                g.setFont(Font.font("Microsoft YaHei UI", 12));
+                g.fillText("灼痕 ×" + enemy.getScorchStacks(), enemy.getX() - 25, enemy.getHitboxCenterY() - 35);
+            }
         }
     }
 
@@ -362,9 +372,9 @@ public final class GameRenderer {
     private void drawEnemyTelegraphs(GraphicsContext g, GameSession session, WorldType currentWorld) {
         List<EnemyTelegraph> telegraphs = session.getEnemies().getTelegraphs();
         if (telegraphs.isEmpty()) return;
-        Color base = currentWorld == WorldType.LIGHT ? LIGHT_GOLD : SHADOW_VIOLET;
         for (EnemyTelegraph telegraph : telegraphs) {
-            if (telegraph.world() != currentWorld || !telegraph.isVisible()) continue;
+            Color base = telegraph.world() == WorldType.LIGHT ? LIGHT_GOLD : SHADOW_VIOLET;
+            if (!telegraph.isVisible()) continue;
             double progress = telegraph.progress();
             double alpha;
             if (telegraph.isTriggered()) {
@@ -529,11 +539,11 @@ public final class GameRenderer {
 
     private void drawEnemyAttacks(GraphicsContext g, GameSession session, WorldType currentWorld) {
         for (EnemyAttack attack : session.getEnemies().getAttacks()) {
-            if (attack.getWorld() != currentWorld || !attack.isActive()) continue;
+            if (!attack.isActive()) continue;
             // 飞行攻击的碰撞半径保持原数值；只扩大独立美术帧，避免“看不见的小弹”
             // 与实际判定不一致。不同弹种按轮廓复杂度给出不同的清晰显示尺寸。
             double size = attack.isMoving() ? projectileVisualSize(attack) : Math.max(74, attack.getRadius() * 3.5);
-            if (!drawMonsterEffect(g, attack.getSource(), currentWorld, attack.getEffectId(), attack.getX(), attack.getY(),
+            if (!drawMonsterEffect(g, attack.getSource(), attack.getWorld(), attack.getEffectId(), attack.getX(), attack.getY(),
                     attack.getAngleRadians(), size, 0.20, .36)) {
                 g.setFill(currentWorld == WorldType.LIGHT ? Color.web("#fff0a2") : Color.web("#d59aff"));
                 g.fillOval(attack.getX() - attack.getRadius(), attack.getY() - attack.getRadius(),
@@ -541,7 +551,6 @@ public final class GameRenderer {
             }
         }
         for (EnemyVisualEffect effect : session.getEnemies().getVisualEffects()) {
-            if (effect.world() != currentWorld) continue;
             if (effect.isBodyAnimation()) drawMonsterBodyEffect(g, effect);
             else drawMonsterEffect(g, effect.source(), effect.world(), effect.effectId(),
                     effect.x(), effect.y(), effect.angleRadians(), effect.size(), effect.age(), effect.duration());
@@ -1966,7 +1975,7 @@ public final class GameRenderer {
         }
 
         g.setFill(Color.web("#fdf6e9"));
-        g.fillText("相位", HUD_X + 14, HUD_Y + 66);
+        g.fillText(player.isShiftSlowed() ? "减速" : player.getPhaseEnergy() >= GameConfig.PHASE_ENERGY_MAX ? "强化" : "切界", HUD_X + 14, HUD_Y + 66);
         double phaseY = HUD_Y + 54;
         g.setFill(Color.rgb(255, 255, 255, 0.12));
         g.fillRoundRect(HUD_VALUE_X, phaseY, HUD_VALUE_WIDTH, 14, 7, 7);
@@ -1983,7 +1992,7 @@ public final class GameRenderer {
         // 盾量取整：护盾是临时生命值，小数（12.3）在这里只会占位置、读不出额外信息。
         g.setFill(Color.web("#e8dff2"));
         g.setFont(Font.font("Microsoft YaHei UI", 11));
-        g.fillText("光残敌 " + session.getLightEnemyCount() + "　影残敌 " + session.getShadowEnemyCount()
+        g.fillText("光招式 " + session.getLightEnemyCount() + "　影招式 " + session.getShadowEnemyCount()
                 + "　金币 " + session.getCoins()
                 + "　盾 " + Math.round(player.getShield()) + "/" + Math.round(player.getMaxShield()),
                 HUD_X + 14, HUD_Y + 86);

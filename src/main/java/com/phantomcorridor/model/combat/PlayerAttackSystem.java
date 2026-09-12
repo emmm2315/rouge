@@ -147,6 +147,11 @@ public final class PlayerAttackSystem {
     }
 
     /** 清空全部临时攻击：切界、离房、死亡、换武器时调用。 */
+    public void cancelForWorldShift() {
+        clearTransientAttacks();
+        cooldownRemaining = 0.0;
+    }
+
     public void clearTransientAttacks() {
         projectiles.clear();
         pending.clear();

@@ -137,7 +137,7 @@ class EnemySystemTest {
     }
 
     @Test
-    void enemyInTheOtherWorldStaysIdle() {
+    void enemyPursuesRegardlessOfPlayerForm() {
         Room room = openRoom(3, RoomType.BATTLE);
         RoomNavigationSystem navigation = navigationFor(room);
         Player player = new Player(240, 240);
@@ -151,13 +151,13 @@ class EnemySystemTest {
         runFor(system, player, navigation, 1.0);
 
         assertEquals(WorldType.LIGHT, player.getCurrentWorld());
-        assertEquals(beforeX, shadowEnemy.getX(), 1e-9);
-        assertEquals(beforeY, shadowEnemy.getY(), 1e-9);
-        assertFalse(shadowEnemy.isAware());
+        assertTrue(Math.hypot(shadowEnemy.getX() - player.getX(), shadowEnemy.getY() - player.getY())
+                < Math.hypot(beforeX - player.getX(), beforeY - player.getY()));
+        assertTrue(shadowEnemy.isAware());
     }
 
     @Test
-    void shiftingWorldMakesEnemiesInTheLeftWorldLoseTheirTarget() {
+    void shiftingWorldPreservesEnemyAwareness() {
         Room room = openRoom(3, RoomType.BATTLE);
         RoomNavigationSystem navigation = navigationFor(room);
         Player player = new Player(240, 240);
@@ -173,11 +173,8 @@ class EnemySystemTest {
         player.toggleWorld();
         system.onWorldChanged(player.getCurrentWorld());
 
-        assertTrue(lightEnemies.stream().noneMatch(Enemy::isAware),
-                "玩家切界后，被留在旧世界的敌人应当丢失目标");
-        assertTrue(lightEnemies.stream()
-                        .allMatch(enemy -> enemy.getAlertRemaining() == GameConfig.ENEMY_ALERT_TIME),
-                "重新索敌时需要重新起手，避免玩家刚切界回来就被贴脸开火");
+        assertTrue(lightEnemies.stream().allMatch(Enemy::isAware),
+                "共享敌人在切界后继续索敌");
     }
 
     @Test

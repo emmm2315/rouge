@@ -47,6 +47,28 @@ public enum EnemyKind {
     /** 物种档位：决定身位、受击框、渲染倍数与战斗行为。 */
     public enum Tier { NORMAL, ELITE, BOSS }
 
+    /** 两界共享敌人，弱点由物种决定，不随玩家切界重置。 */
+    public enum Affinity {
+        LIGHT_WEAK("弱光"), SHADOW_WEAK("弱影"), COUPLED("光影破防");
+        private final String label;
+        Affinity(String label) { this.label = label; }
+        public String label() { return label; }
+        public double damageMultiplier(com.phantomcorridor.model.WorldType attackWorld, boolean detonating) {
+            if (this == COUPLED) return detonating ? 1.5 : 0.5;
+            boolean light = attackWorld == com.phantomcorridor.model.WorldType.LIGHT;
+            return light == (this == LIGHT_WEAK) ? 1.35 : 0.85;
+        }
+    }
+
+    public Affinity affinity() {
+        return switch (this) {
+            case WOLF, SPORE, RAYBAT, WEAVER -> Affinity.LIGHT_WEAK;
+            case LANTERN, MAGE, EXECUTIONER, MANTIS -> Affinity.SHADOW_WEAK;
+            case GOLEM, BEETLE, BELL, WATCHER, PRISM_CRAB, ROOTKING, HOURGLASS -> Affinity.COUPLED;
+        };
+    }
+
+
     private final String assetId;
     private final Tier tier;
     private final int hitPoints;

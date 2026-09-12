@@ -197,6 +197,7 @@ public final class GameSession {
             phasePulseVisibleRemaining = GameConfig.PHASE_PULSE_VISIBLE_TIME;
         }
         // 切界成功：打开相位陀螺的攻速窗口，并结束夜行披风的影界加速。
+        attackSystem.cancelForWorldShift();
         player.onWorldShifted();
         enemies.onWorldChanged(player.getCurrentWorld());
         return true;

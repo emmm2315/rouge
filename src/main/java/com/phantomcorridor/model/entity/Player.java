@@ -28,6 +28,15 @@ public final class Player {
     private double y;
     private int coins;
     private double phaseEnergy;
+    private double shiftSlowRemaining;
+
+    public void applyShiftProtection(boolean empowered) {
+        shiftSlowRemaining = empowered ? 0.0 : GameConfig.BASIC_SHIFT_SLOW_TIME;
+        if (empowered) hitInvulnerability = Math.max(hitInvulnerability,
+                GameConfig.EMPOWERED_SHIFT_INVULNERABILITY);
+    }
+
+    public boolean isShiftSlowed() { return shiftSlowRemaining > 0.0; }
     private int attackCharges;
     private int maxAttackCharges;
     private double attackChargeRecoveryTimer;
@@ -71,6 +80,7 @@ public final class Player {
         this.y = y;
         this.coins = 0;
         this.phaseEnergy = GameConfig.PHASE_ENERGY_INITIAL;
+        this.shiftSlowRemaining = 0.0;
         this.maxAttackCharges = GameConfig.ATTACK_CHARGE_MAX;
         this.attackCharges = maxAttackCharges;
         this.attackChargeRecoveryTimer = 0.0;
@@ -103,7 +113,7 @@ public final class Player {
      * 只有玩家模型看得见自己的装备栏，把公式写在导航层就会让装备效果静默失效。
      */
     public double movementSpeed() {
-        double speed = GameConfig.PLAYER_BASE_SPEED;
+        double speed = GameConfig.PLAYER_BASE_SPEED * (isShiftSlowed() ? GameConfig.BASIC_SHIFT_SPEED : 1.0);
         if (currentWorld != WorldType.SHADOW) return speed;
         speed *= GameConfig.SHADOW_SPEED_MULTIPLIER
                 * (1.0 + equipmentCount(EquipmentType.DUSK_CLOAK) * 0.10);
@@ -280,6 +290,7 @@ public final class Player {
 
     public void updateAnimation(double dt, double movementX, double movementY, boolean attacking,
                                 boolean shifting) {
+        shiftSlowRemaining = Math.max(0.0, shiftSlowRemaining - Math.max(0.0, dt));
         hitInvulnerability = Math.max(0.0, hitInvulnerability - Math.max(0.0, dt));
         hitFlashRemaining = Math.max(0.0, hitFlashRemaining - Math.max(0.0, dt));
         updateTemporaryEffects(dt);

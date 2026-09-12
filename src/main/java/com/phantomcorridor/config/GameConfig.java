@@ -498,7 +498,14 @@ public final class GameConfig {
     public static final double PHASE_ENERGY_PER_FRAGMENT = 25.0;
 
     /** 切换世界后的冷却时间（秒，占位；§3.3"切换后进入冷却恢复期"） */
-    public static final double WORLD_SWITCH_COOLDOWN = 0.6;
+    public static final double WORLD_SWITCH_COOLDOWN = 0.3;
+    public static final double BASIC_SHIFT_SLOW_TIME = 0.3;
+    public static final double BASIC_SHIFT_SPEED = 0.65;
+    public static final double EMPOWERED_SHIFT_INVULNERABILITY = 0.3;
+    public static final double SCORCH_DURATION = 6.0;
+    public static final int SCORCH_MAX_STACKS = 3;
+    public static final double SCORCH_DAMAGE_PER_STACK = 0.4;
+    public static final double SCORCH_ENERGY_PER_STACK = 8.0;
 
     /** 切界脉冲清除玩家周围敌方弹幕的半径。 */
     public static final double PHASE_PULSE_RADIUS = 118.0;
