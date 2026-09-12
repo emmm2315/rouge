@@ -1639,7 +1639,9 @@ public final class GameRenderer {
     }
 
     private void drawMiniMap(GraphicsContext g, GameSession session, boolean light) {
-        if (session.getLightEnemyCount() + session.getShadowEnemyCount() > 0) return;
+        // 波次之间敌人列表会暂时为空，但房间仍处于战斗状态；
+        // 必须等全部波次完成后才恢复小地图，否则玩家会误以为可以离开。
+        if (!session.getEnemies().isRoomCleared()) return;
         Room current = session.getNavigation().getCurrentRoom();
         double panelSize = MINI_MAP_PANEL_SIZE;
         double panelX = MINI_MAP_X;
