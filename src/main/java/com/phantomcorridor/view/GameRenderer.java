@@ -391,7 +391,7 @@ public final class GameRenderer {
             g.restore();
             g.setFill(Color.WHITE);
             g.setFont(Font.font("Microsoft YaHei UI", 11));
-            g.fillText(enemy.getKind().affinity().label(), enemy.getX() - 24, enemy.getHitboxCenterY() - 50);
+            g.fillText(enemy.isSpawning() ? "现身中" : enemy.getKind().affinity().label(), enemy.getX() - 24, enemy.getHitboxCenterY() - 50);
             if (enemy.getScorchStacks() > 0) {
                 g.setFill(LIGHT_GOLD);
                 g.setFont(Font.font("Microsoft YaHei UI", 12));
@@ -2114,7 +2114,10 @@ public final class GameRenderer {
         // 盾量取整：护盾是临时生命值，小数（12.3）在这里只会占位置、读不出额外信息。
         g.setFill(Color.web("#e8dff2"));
         g.setFont(Font.font("Microsoft YaHei UI", 11));
-        g.fillText("光招式 " + session.getLightEnemyCount() + "　影招式 " + session.getShadowEnemyCount()
+        g.fillText((session.getEnemies().getTotalWaves() > 0
+                ? "波次 " + session.getEnemies().getCurrentWave() + "/" + session.getEnemies().getTotalWaves()
+                    + (session.getEnemies().isBetweenWaves() ? " 待刷新" : " 剩余 " + session.getEnemies().getEnemies().size())
+                : "敌人 " + session.getEnemies().getEnemies().size())
                 + "　金币 " + session.getCoins()
                 + "　盾 " + Math.round(player.getShield()) + "/" + Math.round(player.getMaxShield()),
                 HUD_X + 14, HUD_Y + 86);

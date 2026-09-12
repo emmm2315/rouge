@@ -102,23 +102,23 @@ class CombatRebalanceTest {
         assertTrue(EnemyKind.WATCHER.hitPoints() >= 400);
     }
 
-    // ================= 房间规模随层数增长 =================
+    // ================= 单波数量保持小规模 =================
 
     @Test
-    void battleRoomsSpawnMoreEnemiesOnDeeperFloors() {
+    void battleWavesKeepSmallPopulationOnDeeperFloors() {
         assertEquals(GameConfig.BATTLE_ENEMY_MIN, GameConfig.battleEnemyCount(1, 0));
         for (int floor = 2; floor <= GameConfig.TOTAL_FLOORS; floor++) {
-            assertTrue(GameConfig.battleEnemyCount(floor, 0) > GameConfig.battleEnemyCount(floor - 1, 0),
-                    "第 " + floor + " 层应当比上一层多刷怪");
+            assertTrue(GameConfig.battleEnemyCount(floor, 0) == GameConfig.battleEnemyCount(floor - 1, 0),
+                    "第 " + floor + " 层不应增加同屏怪物数量");
         }
         assertTrue(GameConfig.battleEnemyCount(GameConfig.TOTAL_FLOORS, 2)
                 <= GameConfig.BATTLE_ENEMY_MAX_CAP, "数量要封顶，不能把房间挤爆");
 
-        // 真进房间数一遍：同一种子、同一张图，第 5 层的怪必须明显更多。
+        // 真进房间数一遍：同一种子、同一张图，第 5 层的同屏数量也不能增加。
         Room room = openRoom(4, RoomType.BATTLE, 1280, 960);
         int shallow = enemiesOnFloor(room, 1);
         int deep = enemiesOnFloor(room, GameConfig.TOTAL_FLOORS);
-        assertTrue(deep > shallow, "第 5 层的战斗房应当更挤：第 1 层 " + shallow + " 只，第 5 层 " + deep + " 只");
+        assertEquals(shallow, deep, "深层仍保持每波少量敌人");
     }
 
     @Test

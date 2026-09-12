@@ -97,6 +97,22 @@ public final class EnemySystem {
     /** 已经结算过的命中标识：多段招式靠它区分“同一段的重复判定”和“下一段”。 */
     private final Set<Long> consumedHitIds = new HashSet<>();
     private int activeRoomId = -1;
+    private Room waveRoom;
+    private long waveSeed;
+    private int currentWave;
+    private int totalWaves;
+    private double waveDelay = -1.0;
+
+    private void resetWaves() {
+        waveRoom = null;
+        currentWave = totalWaves = 0;
+        waveDelay = -1.0;
+    }
+
+    public int getCurrentWave() { return currentWave; }
+    public int getTotalWaves() { return totalWaves; }
+    public boolean isBetweenWaves() { return waveDelay >= 0.0; }
+
     private int killsSinceLastRead;
     private int summonCallsSinceLastRead;
     private int floor = 1;
@@ -109,6 +125,7 @@ public final class EnemySystem {
     public BlinkFlash getBlinkFlash() { return blinkFlash; }
 
     public void reset() {
+        resetWaves();
         enemies.clear();
         attacks.clear();
         visualEffects.clear();
@@ -141,6 +158,7 @@ public final class EnemySystem {
     /** 仅在未清理的战斗/Boss 房生成；Boss 房严格只生成一名首领（按层从 {@link BossRoster} 取）。 */
     public void enterRoom(Room room, long dungeonSeed, Player player, RoomNavigationSystem navigation) {
         if (activeRoomId == room.id()) return;
+        resetWaves();
         enemies.clear();
         attacks.clear();
         visualEffects.clear();
@@ -162,8 +180,20 @@ public final class EnemySystem {
             spawn(boss, WorldType.LIGHT, room, player, navigation, random);
             return;
         }
-        int count = GameConfig.battleEnemyCount(floor,
-                random.nextInt(GameConfig.BATTLE_ENEMY_MAX - GameConfig.BATTLE_ENEMY_MIN + 1));
+        waveRoom = room;
+        waveSeed = dungeonSeed ^ ((long) room.id() * 0x9E3779B97F4A7C15L);
+        totalWaves = 1 + random.nextInt(GameConfig.BATTLE_WAVE_MAX);
+        spawnNextWave(player, navigation);
+    }
+
+    private void spawnNextWave(Player player, RoomNavigationSystem navigation) {
+        currentWave++;
+        waveDelay = -1.0;
+        Room room = waveRoom;
+        Random random = new Random(waveSeed + currentWave * 0x632BE59BD9B4E019L);
+        Random placement = new Random(waveSeed ^ currentWave);
+        int count = difficulty.minWaveEnemies()
+                + random.nextInt(difficulty.maxWaveEnemies() - difficulty.minWaveEnemies() + 1);
         double eliteChance = GameConfig.battleEliteChance(floor);
         for (int i = 0; i < count; i++) {
             // 精英替换：概率随层数提高（第 1 层没精英，让玩家先认熟基础招式），总量不变。
@@ -171,8 +201,23 @@ public final class EnemySystem {
                     ? ELITE_POOL[random.nextInt(ELITE_POOL.length)]
                     : BATTLE_POOL[random.nextInt(BATTLE_POOL.length)];
             WorldType world = i % 2 == 0 ? WorldType.LIGHT : WorldType.SHADOW;
-            spawn(kind, world, room, player, navigation, random);
+            spawn(kind, world, room, player, navigation, placement);
         }
+    }
+
+    private void advanceWaves(double dt, Player player, RoomNavigationSystem navigation) {
+        if (waveRoom == null || currentWave >= totalWaves || !enemies.isEmpty()
+                || player.getHp() <= 0) return;
+        if (waveDelay < 0.0) {
+            waveDelay = GameConfig.BATTLE_WAVE_INTERVAL;
+            attacks.clear();
+            telegraphs.clear();
+            activeCasts.clear();
+            consumedHitIds.clear();
+            return;
+        }
+        waveDelay = Math.max(0.0, waveDelay - Math.max(0.0, dt));
+        if (waveDelay == 0.0) spawnNextWave(player, navigation);
     }
 
     private void spawn(EnemyKind kind, WorldType world, Room room, Player player,
@@ -185,9 +230,13 @@ public final class EnemySystem {
             RoomArea area = room.areas().get(random.nextInt(room.areas().size()));
             double x = area.x() + 58 + random.nextDouble() * Math.max(1, area.width() - 116);
             double y = area.y() + 58 + random.nextDouble() * Math.max(1, area.height() - 116);
-            if (Math.hypot(x - player.getX(), y - player.getY()) < 170) continue;
+            if (Math.hypot(x - player.getX(), y - player.getY()) < GameConfig.ENEMY_SPAWN_SAFE_DISTANCE) continue;
             if (navigation.canOccupy(x, y, radius, world)) {
+                final double spawnX = x, spawnY = y;
+                if (enemies.stream().anyMatch(other -> Math.hypot(other.getX() - spawnX,
+                        other.getY() - spawnY) < enemyRadius(other) + radius + 24)) continue;
                 enemy.setPosition(x, y);
+                if (!enemy.isBoss()) enemy.beginSpawnGrace();
                 enemies.add(enemy);
                 return;
             }
@@ -243,6 +292,7 @@ public final class EnemySystem {
             if (enemy.getAnimationAction().equals("guard")) enemy.playAnimation("idle", 1.0 / 6.0, true);
             double distance = Math.hypot(enemy.getX() - player.getX(), enemy.getY() - player.getY());
             if (!acquireTarget(enemy, distance)) continue;
+            if (enemy.isSpawning()) continue;
             // 索敌成功后即使隔着墙/障碍也会持续接近；只有真正看得见玩家时才开火。
             // 视线用弹体半径探测：判定的其实是“这条线上弹体能不能飞过去”。
             // 若用敌人自身半径（首领 46 像素），玩家只要站在只有更小身位放得下的位置，
@@ -274,6 +324,7 @@ public final class EnemySystem {
         updateRootWalls(dt, navigation);
         updateSummonRifts(dt, navigation);
         updateEnemyAttacks(dt, player, navigation);
+        advanceWaves(dt, player, navigation);
     }
 
     /** 裂隙特效只是视觉残留，按剩余时间自然消退。 */
@@ -2158,18 +2209,20 @@ public final class EnemySystem {
     }
 
     public void spawnEventEnemies(Room room, long seed, Player player, RoomNavigationSystem navigation) {
+        resetWaves();
         Random random = new Random(seed ^ room.id() * 0x51ED270BL);
         enemies.clear(); attacks.clear(); visualEffects.clear(); summonRifts.clear();
         telegraphs.clear(); rootWalls.clear(); pendingWalls.clear(); consumedHitIds.clear();
         activeCasts.clear(); activeRoomId = room.id();
-        int count = 2 + random.nextInt(2);
+        int count = difficulty.minWaveEnemies()
+                + random.nextInt(difficulty.maxWaveEnemies() - difficulty.minWaveEnemies() + 1);
         for (int i = 0; i < count; i++) {
             EnemyKind kind = i == 0 ? EnemyKind.WOLF : EnemyKind.LANTERN;
             spawn(kind, i % 2 == 0 ? WorldType.LIGHT : WorldType.SHADOW, room, player, navigation, random);
         }
     }
 
-    public boolean isRoomCleared() { return enemies.isEmpty(); }
+    public boolean isRoomCleared() { return enemies.isEmpty() && currentWave >= totalWaves; }
     public int getCount(WorldType world) { return (int) enemies.stream().filter(enemy -> enemy.getWorld() == world).count(); }
     public int consumeKills() { int result = killsSinceLastRead; killsSinceLastRead = 0; return result; }
 

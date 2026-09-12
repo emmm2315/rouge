@@ -17,6 +17,9 @@ public final class Enemy {
     private int hp;
     private boolean aware;
     private double alertRemaining;
+    private double spawnGrace;
+    public void beginSpawnGrace() { spawnGrace = GameConfig.ENEMY_SPAWN_GRACE; }
+    public boolean isSpawning() { return spawnGrace > 0.0; }
     private double attackCooldown;
     private double blinkCooldown;
     /** 首领召唤：距离下一次增援召唤还有多久（秒），开场置为 {@link GameConfig#WATCHER_SUMMON_OPENING_DELAY}。 */
@@ -209,6 +212,7 @@ public final class Enemy {
     public void resetNormalCastsSinceSummon() { normalCastsSinceSummon = 0; }
 
     public void updateTimers(double dt) {
+        spawnGrace = Math.max(0.0, spawnGrace - Math.max(0.0, dt));
         scorchRemaining = Math.max(0.0, scorchRemaining - Math.max(0.0, dt));
         if (scorchRemaining == 0.0) scorchStacks = 0;
         alertRemaining = Math.max(0.0, alertRemaining - dt);

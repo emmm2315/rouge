@@ -31,7 +31,7 @@ class EnemySystemTest {
     private static final double DT = AppConfig.FIXED_DT;
 
     @Test
-    void battleRoomSpawnsFiveToSevenEnemiesAcrossBothWorlds() {
+    void battleRoomStartsWithTwoToThreeEnemies() {
         Room room = new Room(3, RoomType.BATTLE, 0, 0);
         RoomNavigationSystem navigation = navigationFor(room);
         Player player = new Player(AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0);
@@ -130,7 +130,7 @@ class EnemySystemTest {
         enemy.setPosition(1150, 250);
 
         double beforeX = enemy.getX();
-        runFor(system, player, navigation, 1.0);
+        runFor(system, player, navigation, 1.0 + GameConfig.ENEMY_SPAWN_GRACE);
 
         assertTrue(enemy.getX() < beforeX - 20, "视线被墙挡住时也要继续接近，而不是僵在原地");
         assertTrue(system.getAttacks().isEmpty(), "没有视线时不能隔墙开火");

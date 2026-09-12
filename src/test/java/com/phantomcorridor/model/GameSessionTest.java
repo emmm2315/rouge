@@ -70,9 +70,15 @@ class GameSessionTest {
         walkThroughDoor(session, Direction.NORTH);
         assertFalse(session.getEnemies().getEnemies().isEmpty(), "第一次进入战斗房应当刷怪");
 
-        // 清空房间：门解锁、宝箱出现、房间被标记为已清空。
-        for (Enemy enemy : new ArrayList<>(session.getEnemies().getEnemies())) enemy.damage(999);
-        for (int frame = 0; frame < 5; frame++) update(session);
+        // 每波清空后门继续锁定，最后一波结束才开门并出现宝箱。
+        for (int frame = 0; frame < 400 && !battle.isCleared(); frame++) {
+            for (Enemy enemy : new ArrayList<>(session.getEnemies().getEnemies())) enemy.damage(999);
+            update(session);
+            if (!session.getEnemies().isRoomCleared()) {
+                assertFalse(battle.isCleared());
+                assertFalse(session.isChestVisible());
+            }
+        }
         assertTrue(session.getEnemies().getEnemies().isEmpty());
         assertTrue(session.getNavigation().getCurrentRoom().isCleared(), "清空后房间应当标记为已清空");
         assertTrue(session.isChestVisible(), "清空战斗房后应当出现宝箱");
