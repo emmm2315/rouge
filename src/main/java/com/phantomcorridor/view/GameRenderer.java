@@ -50,6 +50,23 @@ import javafx.scene.text.TextAlignment;
 
 /** Canvas 游戏画面渲染器。只读取模型，不修改游戏状态。 */
 public final class GameRenderer {
+    private List<RoomArea> outlinedAreas = List.of();
+    private java.awt.geom.Area roomOutline = new java.awt.geom.Area();
+
+    private void roomPath(GraphicsContext g) {
+        g.beginPath();
+        double[] point = new double[6];
+        var iterator = roomOutline.getPathIterator(null);
+        while (!iterator.isDone()) {
+            switch (iterator.currentSegment(point)) {
+                case java.awt.geom.PathIterator.SEG_MOVETO -> g.moveTo(point[0], point[1]);
+                case java.awt.geom.PathIterator.SEG_LINETO -> g.lineTo(point[0], point[1]);
+                case java.awt.geom.PathIterator.SEG_CLOSE -> g.closePath();
+                default -> throw new IllegalStateException("Room outline must be rectilinear");
+            }
+            iterator.next();
+        }
+    }
 
     /** 小地图：面板边长与每格房间的像素间距（间距要够大，房间之间才看得出连接关系）。 */
     // 原 280px 面板在战斗外也会过度抢占画面；缩至约 2/3，仍能保留中心跟随与裁剪效果。
@@ -1492,21 +1509,34 @@ public final class GameRenderer {
         Color floor = light ? Color.web("#332d25") : Color.web("#231a31");
         Color tile = light ? Color.web("#3e372c") : Color.web("#2d213e");
         Color border = light ? Color.web("#c09145") : Color.web("#7a4eb0");
-        for (RoomArea area : room.areas()) {
-            g.setFill(floor);
-            g.fillRect(area.x(), area.y(), area.width(), area.height());
-            g.setFill(tile);
-            for (double y = area.y(); y < area.y() + area.height(); y += 32) {
-                for (double x = area.x() + (((int) ((y - area.y()) / 32)) % 2) * 16;
-                     x < area.x() + area.width(); x += 32) g.fillRect(x, y, 16, 16);
+        if (!outlinedAreas.equals(room.areas())) {
+            outlinedAreas = List.copyOf(room.areas());
+            roomOutline = new java.awt.geom.Area();
+            for (RoomArea area : outlinedAreas) {
+                roomOutline.add(new java.awt.geom.Area(new java.awt.geom.Rectangle2D.Double(
+                        area.x(), area.y(), area.width(), area.height())));
             }
-            g.setStroke(Color.rgb(0, 0, 0, 0.72));
-            g.setLineWidth(14);
-            g.strokeRect(area.x(), area.y(), area.width(), area.height());
-            g.setStroke(border);
-            g.setLineWidth(4);
-            g.strokeRect(area.x(), area.y(), area.width(), area.height());
         }
+        g.save();
+        roomPath(g);
+        g.clip();
+        g.setFill(floor);
+        g.fillRect(room.minX(), room.minY(), room.maxX() - room.minX(), room.maxY() - room.minY());
+        g.setFill(tile);
+        for (double y = Math.floor(room.minY() / 32) * 32; y < room.maxY(); y += 32) {
+            for (double x = Math.floor(room.minX() / 32) * 32 - 32
+                    + Math.floorMod((int) (y / 32), 2) * 16; x < room.maxX(); x += 32) {
+                g.fillRect(x, y, 16, 16);
+            }
+        }
+        g.restore();
+        roomPath(g);
+        g.setStroke(Color.rgb(0, 0, 0, 0.72));
+        g.setLineWidth(14);
+        g.stroke();
+        g.setStroke(border);
+        g.setLineWidth(4);
+        g.stroke();
 
         for (Direction direction : Direction.values()) {
             if (room.hasDoor(direction)) {
@@ -1707,12 +1737,47 @@ public final class GameRenderer {
 
     private void drawPhaseWall(GraphicsContext g, double x, double y, double width, double height,
                                Color color, double alpha) {
-        g.setFill(Color.color(color.getRed(), color.getGreen(), color.getBlue(), alpha * 0.66));
-        g.fillRect(x, y, width, height);
-        g.setFill(Color.color(0.05, 0.04, 0.08, alpha));
-        for (double py = y + 4; py < y + height; py += 16) {
-            for (double px = x + 4; px < x + width; px += 16) g.fillRect(px, py, 7, 7);
+        g.save();
+        g.setGlobalAlpha(g.getGlobalAlpha() * alpha);
+        double bevel = 5;
+        double[] xs = {x + bevel, x + width - bevel, x + width, x + width,
+                x + width - bevel, x + bevel, x, x};
+        double[] ys = {y, y, y + bevel, y + height - bevel,
+                y + height, y + height, y + height - bevel, y + bevel};
+        g.setFill(Color.rgb(0, 0, 0, 0.35));
+        g.fillRoundRect(x + 3, y + 5, width, height, 8, 8);
+        g.setFill(new LinearGradient(0, 0, 0.7, 1, true, CycleMethod.NO_CYCLE,
+                new Stop(0, color.interpolate(Color.web("#45414a"), 0.65)),
+                new Stop(1, Color.web("#201d29"))));
+        g.fillPolygon(xs, ys, 8);
+        g.setStroke(Color.web("#13111b"));
+        g.setLineWidth(2);
+        g.strokePolygon(xs, ys, 8);
+        g.setStroke(color.interpolate(Color.WHITE, 0.2));
+        g.setLineWidth(1);
+        g.strokeLine(x + bevel, y + 2, x + width - bevel, y + 2);
+        g.strokeLine(x + 2, y + bevel, x + 2, y + height - bevel);
+        g.setFill(Color.rgb(8, 7, 14, 0.45));
+        g.fillRect(x + 5, y + height - 7, width - 10, 4);
+        // 长墙使用错开的石缝；中心镶嵌符文让短柱也有明确的视觉重心。
+        g.setStroke(Color.rgb(8, 7, 14, 0.55));
+        if (width > height * 1.5) {
+            for (double px = x + 28; px < x + width - 12; px += 32)
+                g.strokeLine(px, y + 5, px - 3, y + height - 9);
+        } else if (height > width * 1.5) {
+            for (double py = y + 28; py < y + height - 12; py += 32)
+                g.strokeLine(x + 5, py, x + width - 5, py - 2);
         }
+        double cx = x + width / 2, cy = y + height / 2 - 1;
+        g.setFill(Color.web("#17141f"));
+        g.fillPolygon(new double[]{cx, cx + 8, cx, cx - 8},
+                new double[]{cy - 9, cy, cy + 9, cy}, 4);
+        g.setStroke(color);
+        g.strokePolygon(new double[]{cx, cx + 5, cx, cx - 5},
+                new double[]{cy - 6, cy, cy + 6, cy}, 4);
+        g.setFill(color.interpolate(Color.WHITE, 0.35));
+        g.fillRect(cx - 1, cy - 2, 2, 4);
+        g.restore();
     }
 
     private void drawPlayer(GraphicsContext g, Player player, boolean light) {
