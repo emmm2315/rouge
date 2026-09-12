@@ -52,6 +52,60 @@ import javafx.scene.text.TextAlignment;
 public final class GameRenderer {
     private List<RoomArea> outlinedAreas = List.of();
     private java.awt.geom.Area roomOutline = new java.awt.geom.Area();
+    private Image lightFloorTexture;
+    private Image shadowFloorTexture;
+
+    /** 固定种子的无缝石砖贴图，仅首次使用时生成，避免逐帧绘制材质细节。 */
+    private Image floorTexture(boolean light) {
+        Image cached = light ? lightFloorTexture : shadowFloorTexture;
+        if (cached != null) return cached;
+        int size = 384;
+        var canvas = new javafx.scene.canvas.Canvas(size, size);
+        GraphicsContext g = canvas.getGraphicsContext2D();
+        Color stone = Color.web(light ? "#36332d" : "#2c2938");
+        g.setFill(Color.web(light ? "#24231f" : "#1d1b26"));
+        g.fillRect(0, 0, size, size);
+        for (int row = 0; row < 6; row++) {
+            for (int col = -1; col < 4; col++) {
+                // 周期边缘使用同一块砖的数据，跨贴图边界时色差与纹理保持连续。
+                var random = new java.util.Random(7919L * row + 104729L * Math.floorMod(col, 4) + 37);
+                double x = col * 96 + (row % 2) * 48 + 1;
+                double y = row * 64 + 1;
+                Color base = stone.deriveColor(0, 0.92, 0.91 + random.nextDouble() * 0.18, 1);
+                g.setFill(new LinearGradient(0, 0, 0.3, 1, true, CycleMethod.NO_CYCLE,
+                        new Stop(0, base.interpolate(Color.WHITE, 0.025)),
+                        new Stop(1, base.interpolate(Color.BLACK, 0.09))));
+                g.fillRoundRect(x, y, 94, 62, 3, 3);
+                g.setLineWidth(1);
+                g.setStroke(Color.rgb(207, 199, 184, 0.055));
+                g.strokeLine(x + 3, y + 1.5, x + 90, y + 1.5);
+                g.strokeLine(x + 1.5, y + 3, x + 1.5, y + 58);
+                g.setStroke(Color.rgb(0, 0, 0, 0.16));
+                g.strokeLine(x + 3, y + 60.5, x + 91, y + 60.5);
+                for (int grain = 0; grain < 65; grain++) {
+                    g.setFill(grain % 3 == 0 ? Color.rgb(222, 212, 198, 0.035)
+                            : Color.rgb(0, 0, 0, 0.055));
+                    g.fillRect(x + 4 + random.nextInt(85), y + 4 + random.nextInt(53),
+                            1 + random.nextInt(3), 1);
+                }
+                if (random.nextDouble() < 0.28) {
+                    double crackX = x + 18 + random.nextInt(48);
+                    double crackY = y + 12 + random.nextInt(26);
+                    g.setStroke(Color.rgb(0, 0, 0, 0.16));
+                    g.beginPath();
+                    g.moveTo(crackX, crackY);
+                    g.lineTo(crackX + 7, crackY + 4);
+                    g.lineTo(crackX + 11, crackY + 3);
+                    g.lineTo(crackX + 18, crackY + 9);
+                    g.stroke();
+                }
+            }
+        }
+        Image texture = canvas.snapshot(null, null);
+        if (light) lightFloorTexture = texture;
+        else shadowFloorTexture = texture;
+        return texture;
+    }
 
     private void roomPath(GraphicsContext g) {
         g.beginPath();
@@ -1506,8 +1560,6 @@ public final class GameRenderer {
 
     private void drawRoom(GraphicsContext g, GameSession session, boolean light) {
         Room room = session.getNavigation().getCurrentRoom();
-        Color floor = light ? Color.web("#332d25") : Color.web("#231a31");
-        Color tile = light ? Color.web("#3e372c") : Color.web("#2d213e");
         Color border = light ? Color.web("#c09145") : Color.web("#7a4eb0");
         if (!outlinedAreas.equals(room.areas())) {
             outlinedAreas = List.copyOf(room.areas());
@@ -1520,14 +1572,19 @@ public final class GameRenderer {
         g.save();
         roomPath(g);
         g.clip();
-        g.setFill(floor);
+        // 世界坐标锚定的铺装，不随组成房间的矩形重新起排。
+        g.setFill(new javafx.scene.paint.ImagePattern(floorTexture(light), 0, 0, 384, 384, false));
         g.fillRect(room.minX(), room.minY(), room.maxX() - room.minX(), room.maxY() - room.minY());
-        g.setFill(tile);
-        for (double y = Math.floor(room.minY() / 32) * 32; y < room.maxY(); y += 32) {
-            for (double x = Math.floor(room.minX() / 32) * 32 - 32
-                    + Math.floorMod((int) (y / 32), 2) * 16; x < room.maxX(); x += 32) {
-                g.fillRect(x, y, 16, 16);
-            }
+        // 柔和的中央照明与沿真实外墙的积灰阴影，为地面增加深度。
+        g.setFill(new RadialGradient(0, 0, 0.5, 0.45, 0.7, true, CycleMethod.NO_CYCLE,
+                new Stop(0, light ? Color.rgb(220, 185, 119, 0.045) : Color.rgb(151, 125, 210, 0.045)),
+                new Stop(0.55, Color.TRANSPARENT), new Stop(1, Color.rgb(0, 0, 0, 0.20))));
+        g.fillRect(room.minX(), room.minY(), room.maxX() - room.minX(), room.maxY() - room.minY());
+        roomPath(g);
+        for (int width = 48; width >= 16; width -= 16) {
+            g.setStroke(Color.rgb(0, 0, 0, 0.065));
+            g.setLineWidth(width);
+            g.stroke();
         }
         g.restore();
         roomPath(g);
