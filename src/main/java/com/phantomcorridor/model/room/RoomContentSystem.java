@@ -95,6 +95,12 @@ public final class RoomContentSystem {
                 }
             }
             case EVENT -> loot.setEventPending(true);
+            case HIDDEN -> {
+                if (!loot.isHiddenRewardGranted()) {
+                    loot.grantHiddenReward();
+                    loot.addPickup(new Pickup(Pickup.Type.COIN, centerX(room), centerY(room), 20));
+                }
+            }
             default -> { }
         }
     }

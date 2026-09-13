@@ -1,8 +1,7 @@
 package com.phantomcorridor.model.room;
 
 import com.phantomcorridor.model.RoomType;
-// 未使用（IDE 的 Unused import 会报）：房间自身不区分世界，某面墙属于哪一界由 Wall.world 决定。
-// import com.phantomcorridor.model.WorldType;
+import com.phantomcorridor.model.WorldType;
 
 import java.util.*;
 
@@ -20,6 +19,10 @@ public final class Room {
     private boolean cleared;
     private boolean discovered;
     private boolean visited;
+    private WorldType requiredEntryForm;
+    private Direction hiddenEntryDirection;
+    private Direction hiddenExitDirection;
+    private int hiddenExitTargetId = -1;
 
     public Room(int id, RoomType type, int mapX, int mapY) {
         this(id, type, mapX, mapY, Objects.hash(id, type, mapX, mapY));
@@ -69,6 +72,23 @@ public final class Room {
     public boolean isVisited() { return visited; }
     public void discover() { discovered = true; }
     public void visit() { discovered = true; visited = true; }
+
+    public void configureHiddenRoute(WorldType requiredEntryForm, Direction entryDirection) {
+        if (type != RoomType.HIDDEN) throw new IllegalStateException("只有隐藏路线房才能配置形态入口");
+        this.requiredEntryForm = Objects.requireNonNull(requiredEntryForm);
+        this.hiddenEntryDirection = Objects.requireNonNull(entryDirection);
+    }
+    public void setHiddenExit(Direction direction, int targetRoomId) {
+        hiddenExitDirection = Objects.requireNonNull(direction);
+        hiddenExitTargetId = targetRoomId;
+    }
+    public boolean isHiddenRoute() { return type == RoomType.HIDDEN; }
+    public WorldType requiredEntryForm() { return requiredEntryForm; }
+    public boolean hasHiddenEntry(Direction direction) { return hiddenEntryDirection == direction; }
+    public boolean hasHiddenExit() { return hiddenExitDirection != null; }
+    public boolean hasHiddenExit(Direction direction) { return hiddenExitDirection == direction; }
+    public Direction hiddenExitDirection() { return hiddenExitDirection; }
+    public int hiddenExitTargetId() { return hiddenExitTargetId; }
 
     /** 房间内可交互内容的持久状态（货架、宝箱、事件）：进出房间不会重置。 */
     public RoomLoot loot() { return loot; }

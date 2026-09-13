@@ -418,6 +418,7 @@ public final class GameSession {
             case REWARD -> "奖励房";
             case SHOP -> "商店房";
             case EVENT -> "事件房";
+            case HIDDEN -> "隐藏房";
             case BOSS -> "Boss 房";
         };
     }

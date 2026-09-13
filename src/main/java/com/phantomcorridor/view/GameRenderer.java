@@ -207,6 +207,7 @@ public final class GameRenderer {
         drawEnemies(g, session, player.getCurrentWorld());
         drawEnemyAttacks(g, session, player.getCurrentWorld());
         drawPortal(g, session);
+        drawHiddenExit(g, session);
         drawPickups(g, session);
         drawInteractionPrompt(g, session);
         // 拖尾垫在角色之下：残影只该在身后露出来，不能糊在自己脸上。
@@ -269,6 +270,28 @@ public final class GameRenderer {
         g.fillText(session.getFloor() + " / " + session.getTotalFloors() + " 层已通", x, y + outer + 26);
         g.fillText("走近按 E 传送", x, y + outer + 46);
         g.setTextAlign(TextAlignment.LEFT);
+    }
+
+    /** 形态限定隐藏出口：用金色菱形提示位置，跨门时才由导航检查形态。 */
+    private void drawHiddenExit(GraphicsContext g, GameSession session) {
+        Room room = session.getNavigation().getCurrentRoom();
+        if (!room.hasHiddenExit()) return;
+        Direction direction = room.hiddenExitDirection();
+        double x = room.doorCenter(direction);
+        double y = switch (direction) {
+            case NORTH -> room.minY() + 8;
+            case SOUTH -> room.maxY() - 8;
+            default -> room.doorCenter(direction);
+        };
+        if (direction == Direction.WEST) x = room.minX() + 8;
+        if (direction == Direction.EAST) x = room.maxX() - 8;
+        g.setFill(Color.color(1.0, 0.83, 0.35, 0.82));
+        g.setStroke(Color.color(0.35, 0.18, 0.55, 0.95));
+        g.setLineWidth(2.0);
+        g.fillPolygon(new double[]{x, x + 13, x, x - 13},
+                new double[]{y - 13, y, y + 13, y}, 4);
+        g.strokePolygon(new double[]{x, x + 13, x, x - 13},
+                new double[]{y - 13, y, y + 13, y}, 4);
     }
 
     private void drawPhasePulse(GraphicsContext g, GameSession session, boolean light) {
@@ -1733,6 +1756,10 @@ public final class GameRenderer {
                 g.setLineWidth(1.0);
                 g.strokeOval(x + 5, y - 13, 8, 8);
             }
+            if (room.hasHiddenExit() && room.isVisited()) {
+                g.setFill(Color.web("#f4d06f"));
+                g.fillOval(x - 4, y - 16, 8, 8);
+            }
         }
         g.restore();
         drawMiniMapLegend(g, panelX, panelY + panelSize);
@@ -1768,12 +1795,14 @@ public final class GameRenderer {
         String glyph = switch (room.type()) {
             case SHOP -> "￥";
             case EVENT -> "?";
+            case HIDDEN -> "◇";
             default -> null;
         };
         if (glyph == null) return false;
         g.setTextAlign(TextAlignment.CENTER);
         g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, glyphSize));
-        g.setFill(room.type() == RoomType.SHOP ? Color.web("#ffe08a") : Color.web("#d9bcff"));
+        g.setFill(room.type() == RoomType.SHOP ? Color.web("#ffe08a")
+                : room.type() == RoomType.HIDDEN ? Color.web("#f4d06f") : Color.web("#d9bcff"));
         g.fillText(glyph, x, y + glyphSize * 0.36);
         g.setTextAlign(TextAlignment.LEFT);
         return true;
