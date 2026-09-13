@@ -30,6 +30,8 @@ public final class Enemy {
     private int summonStage;
     /** 首领自上次召唤后已经完整起手的普通技能数，防止召唤机制吞掉原有出招轮换。 */
     private int normalCastsSinceSummon;
+    private boolean phaseTwo;
+    private boolean phaseSkillPending;
     /** 是否为首领召唤出来的造物（首领倒下或离开该界时随之溃散）。 */
     private final boolean summoned;
     private int avoidanceSide;
@@ -120,6 +122,10 @@ public final class Enemy {
         this.summonPressure = 0.0;
     }
     public boolean isBoss() { return boss; }
+    public boolean isPhaseTwo() { return phaseTwo; }
+    public boolean isPhaseSkillPending() { return phaseSkillPending; }
+    public void enterPhaseTwo() { phaseTwo = true; phaseSkillPending = true; }
+    public void consumePhaseSkill() { phaseSkillPending = false; }
     public double getX() { return x; }
     public double getY() { return y; }
     public void setPosition(double x, double y) { this.x = x; this.y = y; }

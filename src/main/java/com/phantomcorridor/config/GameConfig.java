@@ -115,14 +115,14 @@ public final class GameConfig {
     public static final double BATTLE_WAVE_INTERVAL = 1.2;
     public static final double ENEMY_SPAWN_SAFE_DISTANCE = 260.0;
     public static final double ENEMY_SPAWN_GRACE = 0.8;
-    public static final int BATTLE_ENEMY_MIN = 2;
-    public static final int BATTLE_ENEMY_MAX = 3;
+    public static final int BATTLE_ENEMY_MIN = 3;
+    public static final int BATTLE_ENEMY_MAX = 4;
 
     /** 每层额外同屏数量保持为零，难度通过属性和精英概率成长。 */
     public static final int BATTLE_ENEMY_PER_FLOOR = 0;
 
     /** 单波战斗的敌人数量硬上限：再多就会把房间挤成一团、也打不动。 */
-    public static final int BATTLE_ENEMY_MAX_CAP = 3;
+    public static final int BATTLE_ENEMY_MAX_CAP = 5;
 
     /** 精英替换普通怪的起始层数：第 1 层只出普通怪，让玩家先认熟基础招式。 */
     public static final int BATTLE_ELITE_MIN_FLOOR = 2;

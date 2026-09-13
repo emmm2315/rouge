@@ -115,6 +115,7 @@ public final class EnemySystem {
 
     private int killsSinceLastRead;
     private int summonCallsSinceLastRead;
+    private int phaseTransitionsSinceLastRead;
     private int floor = 1;
     private Difficulty difficulty = Difficulty.NORMAL;
     /** 当前房间的导航系统（只读引用，用于视线判定；没有房间时为 null）。 */
@@ -140,6 +141,7 @@ public final class EnemySystem {
         activeRoomId = -1;
         killsSinceLastRead = 0;
         summonCallsSinceLastRead = 0;
+        phaseTransitionsSinceLastRead = 0;
         blinkFlash = null;
     }
 
@@ -168,6 +170,7 @@ public final class EnemySystem {
         pendingWalls.clear();
         consumedHitIds.clear();
         activeCasts.clear();
+        phaseTransitionsSinceLastRead = 0;
         // 房间级临时地形只在生出它的那场战斗里有效；换房时连导航层一起清掉。
         if (navigation != null) navigation.clearTemporaryWalls();
         activeRoomId = room.id();
@@ -194,10 +197,15 @@ public final class EnemySystem {
         Random placement = new Random(waveSeed ^ currentWave);
         int count = difficulty.minWaveEnemies()
                 + random.nextInt(difficulty.maxWaveEnemies() - difficulty.minWaveEnemies() + 1);
-        double eliteChance = GameConfig.battleEliteChance(floor);
+        double eliteChance = floor < GameConfig.BATTLE_ELITE_MIN_FLOOR
+                ? 0.0 : difficulty.eliteWaveChance();
+        boolean guaranteedElite = difficulty == Difficulty.INSANE
+                || (difficulty == Difficulty.HARD && currentWave == 1);
         for (int i = 0; i < count; i++) {
             // 精英替换：概率随层数提高（第 1 层没精英，让玩家先认熟基础招式），总量不变。
-            EnemyKind kind = i == count - 1 && random.nextDouble() < eliteChance
+            boolean elite = (i == count - 1 && random.nextDouble() < eliteChance)
+                    || (guaranteedElite && i == 0);
+            EnemyKind kind = elite
                     ? ELITE_POOL[random.nextInt(ELITE_POOL.length)]
                     : BATTLE_POOL[random.nextInt(BATTLE_POOL.length)];
             WorldType world = i % 2 == 0 ? WorldType.LIGHT : WorldType.SHADOW;
@@ -272,6 +280,8 @@ public final class EnemySystem {
             // 首领在半血时从光界进入暗界，保留同一实体与血量。
             if (enemy.isBoss() && enemy.getHp() * 2 <= enemy.getMaxHp() && enemy.getWorld() == WorldType.LIGHT) {
                 enemy.setWorld(WorldType.SHADOW);
+                enemy.enterPhaseTwo();
+                phaseTransitionsSinceLastRead++;
                 attacks.removeIf(attack -> attack.getSource() == enemy.getKind());
                 telegraphs.removeIf(telegraph -> telegraph.source() == enemy.getKind());
                 activeCasts.remove(enemy);
@@ -354,6 +364,13 @@ public final class EnemySystem {
 
     /** 场上还没结算 / 还在表现的预警实体。 */
     public List<EnemyTelegraph> getTelegraphs() { return Collections.unmodifiableList(telegraphs); }
+
+    /** 自上帧以来完成的首领二阶段转换次数，供会话提示层消费。 */
+    public int consumePhaseTransitions() {
+        int count = phaseTransitionsSinceLastRead;
+        phaseTransitionsSinceLastRead = 0;
+        return count;
+    }
 
     /** 当前有效的临时阻挡地形（根篱），含只作装饰、不参与碰撞的那些。 */
     public List<RootWall> getRootWalls() { return Collections.unmodifiableList(rootWalls); }
@@ -497,6 +514,17 @@ public final class EnemySystem {
                 }
             }
             case MULTI_MARK -> createMarks(enemy, skill, cast);
+            case BARRAGE -> {
+                // 二阶段炮蟹过载先画一圈“炮幕将至”的预警；真正伤害仍由分轮弹体结算，
+                // 这里用 fake 预警避免同一轮被重复扣血。
+                if (skill.phaseTwoOnly()) {
+                    telegraphs.add(EnemyTelegraph.at(enemy.getKind(), enemy.getWorld(), skill.effect(),
+                                    EnemyTelegraph.Shape.RING_GAP, ex, ey,
+                                    Math.atan2(cast.targetY - ey, cast.targetX - ex))
+                            .ring(90, 285).safeGapDegrees(48).damage(0).warn(warn)
+                            .fake().residual(residual).castId(cast.castId).build());
+                }
+            }
             case CHARGE -> {
                 // 冲撞的危险区就是那条锁定直线；真到释放时若撞墙提前停下，会在这里被改短。
                 telegraphs.add(EnemyTelegraph
@@ -1489,8 +1517,13 @@ public final class EnemySystem {
     private EnemySkill chooseSkill(Enemy enemy, double distance) {
         List<EnemySkill> choices = EnemySkill.forEnemy(enemy.getKind(), enemy.getWorld()).stream()
                 .filter(skill -> skill.pattern() != EnemySkill.Pattern.SUMMON)
+                .filter(skill -> !skill.phaseTwoOnly() || enemy.isPhaseTwo())
                 .filter(skill -> distance <= skill.range()).toList();
         if (choices.isEmpty()) return null;
+        if (enemy.isPhaseTwo() && enemy.isPhaseSkillPending()) {
+            EnemySkill signature = choices.stream().filter(EnemySkill::phaseTwoOnly).findFirst().orElse(null);
+            if (signature != null) return signature;
+        }
         return choices.get(Math.floorMod(enemy.nextSkillIndex(), choices.size()));
     }
 
@@ -1505,6 +1538,7 @@ public final class EnemySystem {
         if (enemy.isBoss()) {
             if (skill.pattern() == EnemySkill.Pattern.SUMMON) enemy.resetNormalCastsSinceSummon();
             else enemy.recordNormalCast();
+            if (skill.phaseTwoOnly()) enemy.consumePhaseSkill();
         }
         enemy.setFacingFromVector(dx, dy);
         enemy.playAnimation(skill.actionBase() + "_windup", skill.windup(), false);
@@ -2214,8 +2248,8 @@ public final class EnemySystem {
         enemies.clear(); attacks.clear(); visualEffects.clear(); summonRifts.clear();
         telegraphs.clear(); rootWalls.clear(); pendingWalls.clear(); consumedHitIds.clear();
         activeCasts.clear(); activeRoomId = room.id();
-        int count = difficulty.minWaveEnemies()
-                + random.nextInt(difficulty.maxWaveEnemies() - difficulty.minWaveEnemies() + 1);
+        // 事件伏击仍是轻量的单段遭遇，不跟随战斗房波次扩容。
+        int count = 2 + random.nextInt(2);
         for (int i = 0; i < count; i++) {
             EnemyKind kind = i == 0 ? EnemyKind.WOLF : EnemyKind.LANTERN;
             spawn(kind, i % 2 == 0 ? WorldType.LIGHT : WorldType.SHADOW, room, player, navigation, random);

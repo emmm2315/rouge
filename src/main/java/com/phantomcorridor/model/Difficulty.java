@@ -12,16 +12,16 @@ package com.phantomcorridor.model;
 public enum Difficulty {
 
     /** 简单：敌人基础属性 50% */
-    EASY("简单", 0.5, "每波 2～3 只，敌人生命与防御 50%"),
+    EASY("简单", 0.5, "每波 3～4 只，敌人生命与防御 50%"),
 
     /** 标准：基准难度 */
-    NORMAL("标准", 1.0, "每波 2～3 只，敌人属性基准值"),
+    NORMAL("标准", 1.0, "每波 3～4 只，精英比简单更多"),
 
     /** 困难：敌人基础属性 150% */
-    HARD("困难", 1.5, "每波 2～4 只，敌人生命与防御 150%"),
+    HARD("困难", 1.5, "每波 3～5 只，至少一波含精英"),
 
     /** 屌炸天：敌人基础属性 200% */
-    INSANE("屌炸天", 2.0, "每波 3～4 只，敌人生命与防御 200%");
+    INSANE("屌炸天", 2.0, "每波 4～5 只，每波至少一只精英");
 
     private final String displayName;
     private final double enemyStatMultiplier;
@@ -33,9 +33,14 @@ public enum Difficulty {
         this.description = description;
     }
 
-    public int minWaveEnemies() { return this == INSANE ? 3 : 2; }
+    public int minWaveEnemies() { return this == INSANE ? 4 : 3; }
 
-    public int maxWaveEnemies() { return this == HARD || this == INSANE ? 4 : 3; }
+    public int maxWaveEnemies() { return this == HARD || this == INSANE ? 5 : 4; }
+
+    /** 战斗房精英概率：标准明确高于简单，困难/屌炸天由波次保证兜底。 */
+    public double eliteWaveChance() { return switch (this) {
+        case EASY -> 0.15; case NORMAL -> 0.35; case HARD, INSANE -> 1.0;
+    }; }
 
     public String displayName() { return displayName; }
 

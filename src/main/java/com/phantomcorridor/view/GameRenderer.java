@@ -2161,7 +2161,8 @@ public final class GameRenderer {
         g.setTextAlign(TextAlignment.CENTER);
         g.setFill(Color.web("#fdf6e9"));
         g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 15));
-        g.fillText(boss.getKind().displayName() + (light ? "　·　光形态" : "　·　影形态"), x + width / 2.0, y + 2);
+        g.fillText(boss.getKind().displayName() + (light ? "　·　光形态" : "　·　影形态")
+                + (boss.isPhaseTwo() ? "　·　二阶段" : ""), x + width / 2.0, y + 2);
         g.setTextAlign(TextAlignment.LEFT);
         g.setFill(Color.rgb(255, 255, 255, 0.14));
         g.fillRoundRect(x, y + 8, width, 8, 4, 4);
