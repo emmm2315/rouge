@@ -11,7 +11,13 @@ package com.phantomcorridor.model.entity;
  * @param remaining 剩余寿命（秒），降到 0 即消散
  * @param total     生成时的总寿命（秒），用于换算淡出进度
  */
-public record DashTrailPoint(double x, double y, double remaining, double total) {
+public record DashTrailPoint(double x, double y, double remaining, double total,
+                             double directionX, double directionY, double animationTime,
+                             com.phantomcorridor.model.WorldType world) {
+
+    public DashTrailPoint(double x, double y, double remaining, double total) {
+        this(x, y, remaining, total, 1, 0, 0, com.phantomcorridor.model.WorldType.LIGHT);
+    }
 
     public DashTrailPoint {
         if (total <= 0.0) throw new IllegalArgumentException("残影总寿命必须为正数");
@@ -29,6 +35,7 @@ public record DashTrailPoint(double x, double y, double remaining, double total)
 
     /** 推进一帧的寿命；返回值是新记录，调用方负责替换旧记录。 */
     public DashTrailPoint aged(double dt) {
-        return new DashTrailPoint(x, y, Math.max(0.0, remaining - Math.max(0.0, dt)), total);
+        return new DashTrailPoint(x, y, Math.max(0.0, remaining - Math.max(0.0, dt)), total,
+                directionX, directionY, animationTime, world);
     }
 }

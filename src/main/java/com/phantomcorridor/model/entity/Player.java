@@ -24,6 +24,11 @@ public final class Player {
     }
 
     private int hp;
+    private com.phantomcorridor.model.Difficulty difficulty = com.phantomcorridor.model.Difficulty.NORMAL;
+
+    public void setDifficulty(com.phantomcorridor.model.Difficulty difficulty) {
+        this.difficulty = difficulty == null ? com.phantomcorridor.model.Difficulty.NORMAL : difficulty;
+    }
     private double x;
     private double y;
     private int coins;
@@ -43,6 +48,11 @@ public final class Player {
     private WorldType currentWorld;
     private PlayerAnimationState animationState;
     private double animationTime;
+    private double attackAnimationRemaining;
+    private double attackAnimationWindup;
+    private double hitAnimationRemaining;
+    private boolean shiftAnimationActive;
+    private double shiftAnimationRemaining;
     private double facingX;
     private double facingY;
     private double hitInvulnerability;
@@ -71,6 +81,7 @@ public final class Player {
     }
 
     public void reset(double x, double y) {
+        difficulty = com.phantomcorridor.model.Difficulty.NORMAL;
         // 先清理上一局的装备，再计算初始生命上限与护盾容量：此时装备栏为空，
         // 所以新局不会继承上一局的「行者心核」生命上限或「相位容器」护盾容量。
         this.items.clear();
@@ -87,6 +98,11 @@ public final class Player {
         this.currentWorld = WorldType.LIGHT;
         this.animationState = PlayerAnimationState.IDLE;
         this.animationTime = 0.0;
+        this.attackAnimationRemaining = 0.0;
+        this.attackAnimationWindup = 0.0;
+        this.hitAnimationRemaining = 0.0;
+        this.shiftAnimationActive = false;
+        this.shiftAnimationRemaining = 0.0;
         this.facingX = 1.0;
         this.facingY = 0.0;
         this.hitInvulnerability = 0.0;
@@ -145,6 +161,7 @@ public final class Player {
         // 朝向理论上不会为零向量，兜底避免"原地冲刺"这种什么都看不见的手感。
         if (dashDirectionX == 0.0 && dashDirectionY == 0.0) dashDirectionX = 1.0;
         dashTimeRemaining = GameConfig.DASH_DURATION;
+        attackAnimationRemaining = 0.0;
         return true;
     }
 
@@ -169,7 +186,8 @@ public final class Player {
         if (!isDashing()) return;
         if (dashTrail.size() >= GameConfig.DASH_TRAIL_MAX) dashTrail.remove(0);
         dashTrail.add(new DashTrailPoint(x, y,
-                GameConfig.DASH_TRAIL_LIFETIME, GameConfig.DASH_TRAIL_LIFETIME));
+                GameConfig.DASH_TRAIL_LIFETIME, GameConfig.DASH_TRAIL_LIFETIME,
+                dashDirectionX, dashDirectionY, GameConfig.DASH_DURATION - dashTimeRemaining, currentWorld));
     }
 
     /** 是否正在冲刺（伤害免疫与渲染拖尾都以此为准）。 */
@@ -286,18 +304,46 @@ public final class Player {
 
     public void toggleWorld() {
         currentWorld = currentWorld == WorldType.LIGHT ? WorldType.SHADOW : WorldType.LIGHT;
+        attackAnimationRemaining = 0.0;
+        shiftAnimationRemaining = PlayerAnimationCatalog.clip(currentWorld == WorldType.LIGHT ? "light" : "shadow", "transition", "down").duration();
+        animationState = PlayerAnimationState.SHIFTING;
+        animationTime = 0.0;
     }
 
-    public void updateAnimation(double dt, double movementX, double movementY, boolean attacking,
+    /** Called only for a successful attack, including its weapon windup. */
+    public void startAttackAnimation(double directionX, double directionY, double windup) {
+        attackAnimationWindup = Math.max(0, windup);
+        attackAnimationRemaining = Math.max(0, windup)
+                + PlayerAnimationCatalog.clip(currentWorld == WorldType.LIGHT ? "light" : "shadow", "attack", "down").duration();
+        double length = Math.hypot(directionX, directionY);
+        if (length > 0) { facingX = directionX / length; facingY = directionY / length; }
+        animationState = PlayerAnimationState.ATTACKING;
+        animationTime = 0.0;
+    }
+
+    /** Compatibility entry point: held attack input no longer drives the body animation. */
+    public void updateAnimation(double dt, double movementX, double movementY, boolean attackHeld,
                                 boolean shifting) {
+        updateAnimation(dt, movementX, movementY, shifting);
+    }
+
+    public void updateAnimation(double dt, double movementX, double movementY, boolean shifting) {
         shiftSlowRemaining = Math.max(0.0, shiftSlowRemaining - Math.max(0.0, dt));
         hitInvulnerability = Math.max(0.0, hitInvulnerability - Math.max(0.0, dt));
         hitFlashRemaining = Math.max(0.0, hitFlashRemaining - Math.max(0.0, dt));
         updateTemporaryEffects(dt);
+        attackAnimationRemaining = Math.max(0.0, attackAnimationRemaining - Math.max(0.0, dt));
+        hitAnimationRemaining = Math.max(0.0, hitAnimationRemaining - Math.max(0.0, dt));
+        shiftAnimationRemaining = Math.max(0.0, shiftAnimationRemaining - Math.max(0.0, dt));
+        if (shifting && !shiftAnimationActive) {
+            shiftAnimationRemaining = PlayerAnimationCatalog.clip(currentWorld == WorldType.LIGHT ? "light" : "shadow", "transition", "down").duration();
+        }
+        shiftAnimationActive = shifting;
+        if (hp <= 0) attackAnimationRemaining = 0.0;
         animationTime += Math.max(0.0, dt);
         // 冲刺中朝向锁在冲刺方向上：拖尾与角色朝向必须一致，否则拖尾会"横着飘"。
-        double lookX = isDashing() ? dashDirectionX : movementX;
-        double lookY = isDashing() ? dashDirectionY : movementY;
+        double lookX = isDashing() ? dashDirectionX : attackAnimationRemaining > 0 ? 0 : movementX;
+        double lookY = isDashing() ? dashDirectionY : attackAnimationRemaining > 0 ? 0 : movementY;
         if (lookX != 0.0 || lookY != 0.0) {
             double length = Math.hypot(lookX, lookY);
             facingX = lookX / length;
@@ -305,8 +351,10 @@ public final class Player {
         }
         PlayerAnimationState next = hp <= 0 ? PlayerAnimationState.DOWN
                 : isDashing() ? PlayerAnimationState.DASHING
-                : shifting ? PlayerAnimationState.SHIFTING
-                : attacking ? PlayerAnimationState.ATTACKING
+                : shiftAnimationRemaining > 0 ? PlayerAnimationState.SHIFTING
+                : hitAnimationRemaining > 0 ? PlayerAnimationState.HIT
+                : attackAnimationRemaining > 0 ? PlayerAnimationState.ATTACKING
+                : isHitInvulnerable() ? PlayerAnimationState.INVULNERABLE
                 : movementX != 0.0 || movementY != 0.0 ? PlayerAnimationState.MOVING
                 : PlayerAnimationState.IDLE;
         if (next != animationState) animationTime = 0.0;
@@ -343,6 +391,8 @@ public final class Player {
         hp = Math.max(0, hp - damage);
         hitInvulnerability = GameConfig.PLAYER_HIT_INVULNERABILITY;
         hitFlashRemaining = GameConfig.PLAYER_HIT_FLASH_TIME;
+        hitAnimationRemaining = PlayerAnimationCatalog.clip(currentWorld == WorldType.LIGHT ? "light" : "shadow", "hit", "down").duration();
+        attackAnimationRemaining = 0.0;
         beginHitKnockback(sourceX, sourceY);
         return true;
     }
@@ -371,6 +421,8 @@ public final class Player {
         hp = Math.max(0, hp - healthLost);
         hitInvulnerability = GameConfig.PLAYER_HIT_INVULNERABILITY;
         hitFlashRemaining = GameConfig.PLAYER_HIT_FLASH_TIME;
+        hitAnimationRemaining = PlayerAnimationCatalog.clip(currentWorld == WorldType.LIGHT ? "light" : "shadow", "hit", "down").duration();
+        attackAnimationRemaining = 0.0;
         beginHitKnockback(sourceX, sourceY);
         restorePhaseEnergy(GameConfig.PHASE_ENERGY_ON_HIT);
         return new DamageResult(absorbed, healthLost, shield.getCurrent(),
@@ -538,7 +590,7 @@ public final class Player {
 
     /** 装备提供的该界伤害加成。一件装备只在它所属的那一界计入。 */
     public double equipmentDamageBonus(WorldType world) {
-        double bonus = 0.0;
+        double bonus = equipment.size() * difficulty.equipmentSlotDamageBonus();
         for (EquipmentType item : equipment) {
             bonus += switch (item) {
                 // 光界：晨曦法杖 +20%、晨曦圣印 +10%。
@@ -722,6 +774,10 @@ public final class Player {
     public WorldType getCurrentWorld() { return currentWorld; }
     public PlayerAnimationState getAnimationState() { return animationState; }
     public double getAnimationTime() { return animationTime; }
+    public double getBodyAnimationTime() {
+        return animationState == PlayerAnimationState.ATTACKING
+                ? Math.max(0, animationTime - attackAnimationWindup) : animationTime;
+    }
     public double getFacingX() { return facingX; }
     public double getFacingY() { return facingY; }
     public List<ItemType> getItems() { return Collections.unmodifiableList(items); }

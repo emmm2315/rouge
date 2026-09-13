@@ -23,8 +23,8 @@ class BattleWaveTest {
         Set<Integer> counts = new HashSet<>();
         for (Difficulty difficulty : Difficulty.values()) {
         Set<Integer> sizes = new HashSet<>();
-        int min = difficulty == Difficulty.INSANE ? 4 : 3;
-        int max = difficulty == Difficulty.HARD || difficulty == Difficulty.INSANE ? 5 : 4;
+        int min = 3;
+        int max = difficulty == Difficulty.EASY ? 3 : 4;
         for (int seed = 0; seed < 100; seed++) {
             Room room = room();
             var nav = navigation(room);

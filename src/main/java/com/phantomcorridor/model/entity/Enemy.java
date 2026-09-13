@@ -419,7 +419,8 @@ public final class Enemy {
     private static int scaledHitPoints(EnemyKind kind, int floor, Difficulty difficulty, double hitPointScale) {
         double floorScale = 1.0 + (Math.max(1, floor) - 1) * GameConfig.ENEMY_HP_GROWTH_PER_FLOOR;
         double scale = hitPointScale <= 0.0 ? 1.0 : hitPointScale;
-        return Math.max(1, (int) Math.round(kind.hitPoints() * floorScale * difficulty.enemyStatMultiplier() * scale));
+        double bossScale = kind.boss() ? difficulty.bossHealthMultiplier() : 1.0;
+        return Math.max(1, (int) Math.round(kind.hitPoints() * floorScale * difficulty.enemyStatMultiplier() * scale * bossScale));
     }
 
     /**

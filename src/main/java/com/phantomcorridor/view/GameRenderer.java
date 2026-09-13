@@ -10,6 +10,7 @@ import com.phantomcorridor.model.RoomType;
 import com.phantomcorridor.model.WorldType;
 import com.phantomcorridor.model.entity.Player;
 import com.phantomcorridor.model.entity.PlayerAnimationState;
+import com.phantomcorridor.model.entity.PlayerAnimationCatalog;
 import com.phantomcorridor.model.entity.DashTrailPoint;
 import com.phantomcorridor.model.combat.Projectile;
 import com.phantomcorridor.model.combat.EnemyAttack;
@@ -666,11 +667,11 @@ public final class GameRenderer {
         if (!light && session.getAttackSystem().isMeleeVisible()) {
             drawMeleeArc(g, session, player);
         }
-        if (player.getAnimationState() == PlayerAnimationState.SHIFTING) {
+        if (session.isPhasePulseVisible()) {
             Image[] aura = light ? LIGHT_AURA : SHADOW_AURA;
             if (aura.length > 0) {
                 Image frame = aura[Math.min(aura.length - 1,
-                        (int) (player.getAnimationTime() * 10.0) % aura.length)];
+                        (int) (session.getPhasePulseVisualTime() * 10.0) % aura.length)];
                 double size = 180.0;
                 g.setGlobalBlendMode(BlendMode.ADD);
                 g.drawImage(frame, player.getX() - size / 2.0, player.getY() - size * 0.5,
@@ -778,27 +779,48 @@ public final class GameRenderer {
         double angle = Math.toDegrees(attacks.getMeleeAngleRadians());
         double arc = attacks.getMeleeArcDegrees();
         double range = attacks.getMeleeRange();
-        // 环月镰是整圈，用 slash 贴图会缺一角，所以整圈一律走圆弧画法。
+        double progress = Math.max(0.0, Math.min(1.0,
+                attacks.getMeleeVisualTime() / GameConfig.SHADOW_MELEE_VISIBLE_TIME));
+        double fade = 1.0 - progress * progress;
+        double start = -angle - arc / 2.0;
+        g.save();
+        // Use the same radius and angle as hit detection. Clip the decorative sprite so
+        // narrow weapon attacks cannot suggest damage outside their actual sector.
+        g.beginPath();
+        g.moveTo(player.getX(), player.getY());
+        g.arc(player.getX(), player.getY(), range, range, start, arc);
+        g.closePath();
+        g.clip();
+        g.setFill(new RadialGradient(0, 0, player.getX(), player.getY(), range, false,
+                CycleMethod.NO_CYCLE, new Stop(0, Color.TRANSPARENT),
+                new Stop(0.65, Color.rgb(151, 56, 222, 0.06 * fade)),
+                new Stop(0.94, Color.rgb(191, 87, 255, 0.24 * fade)),
+                new Stop(1, Color.rgb(225, 162, 255, 0.10 * fade))));
+        g.fillOval(player.getX() - range, player.getY() - range, range * 2, range * 2);
         if (arc < 360.0 && SHADOW_SLASHES.length > 0) {
             Image slash = SHADOW_SLASHES[Math.min(SHADOW_SLASHES.length - 1,
-                    (int) (player.getAnimationTime() * 12.0) % SHADOW_SLASHES.length)];
-            double size = Math.max(120.0, range * 1.05);
+                    (int) (attacks.getMeleeVisualTime() / GameConfig.SHADOW_MELEE_VISIBLE_TIME * SHADOW_SLASHES.length))];
+            double size = range * 2.0;
             g.save();
+            g.setGlobalAlpha(fade);
             g.translate(player.getX(), player.getY());
             g.rotate(angle);
             g.drawImage(slash, -size / 2.0, -size * 0.5,
                     size, size * slash.getHeight() / Math.max(1.0, slash.getWidth()));
             g.restore();
-            return;
         }
-        g.setStroke(Color.rgb(190, 132, 242, 0.82));
-        g.setLineWidth(10.0);
-        g.strokeArc(player.getX() - range, player.getY() - range, range * 2.0, range * 2.0,
-                -angle - arc / 2.0, arc, javafx.scene.shape.ArcType.OPEN);
-        g.setStroke(Color.rgb(239, 216, 255, 0.86));
+        // A luminous blade near the hit boundary makes the full 330-degree sweep legible,
+        // even though the original sprite itself only contains a short crescent.
+        double bladeRadius = range - 5.0;
+        g.setStroke(Color.rgb(178, 91, 242, 0.60 * fade));
+        g.setLineWidth(9.0);
+        g.strokeArc(player.getX() - bladeRadius, player.getY() - bladeRadius,
+                bladeRadius * 2, bladeRadius * 2, start, arc, ArcType.OPEN);
+        g.setStroke(Color.rgb(245, 219, 255, 0.90 * fade));
         g.setLineWidth(2.0);
-        g.strokeArc(player.getX() - range, player.getY() - range, range * 2.0, range * 2.0,
-                -angle - arc / 2.0, arc, javafx.scene.shape.ArcType.OPEN);
+        g.strokeArc(player.getX() - bladeRadius, player.getY() - bladeRadius,
+                bladeRadius * 2, bladeRadius * 2, start, arc, ArcType.OPEN);
+        g.restore();
     }
 
     // 以下两个方法当前没有任何调用点（IDE 的 Unused 检查会报）：敌人与敌方弹体都改由
@@ -1840,6 +1862,15 @@ public final class GameRenderer {
     }
 
     private void drawPlayer(GraphicsContext g, Player player, boolean light) {
+        if (player.getAnimationState() != PlayerAnimationState.DOWN) {
+            Image sprite = PlayerSprites.body(player, light);
+            double left = Math.rint(player.getX() - PlayerAnimationCatalog.ANCHOR_X);
+            double top = Math.rint(player.getY() - PlayerAnimationCatalog.ANCHOR_Y);
+            g.drawImage(sprite, left, top, PlayerAnimationCatalog.WIDTH, PlayerAnimationCatalog.HEIGHT);
+            drawHitFlash(g, player, sprite, left, top, PlayerAnimationCatalog.WIDTH, PlayerAnimationCatalog.HEIGHT, false);
+            drawShieldAura(g, player, light);
+            return;
+        }
         if (!(light ? LIGHT_FRAMES : SHADOW_FRAMES).isEmpty()) {
             drawSpritePlayer(g, player, light);
             drawShieldAura(g, player, light);
@@ -1975,38 +2006,23 @@ public final class GameRenderer {
     /**
      * 冲刺拖尾：把冲刺途中按帧记录的残影铺在角色身后，越旧越透明，冲刺结束后自然消散。
      *
-     * <p>残影固定取移动帧而不是当前动作帧——冲刺中角色只有"冲刺"这一个动作，
-     * 与本体共用同一套素材，看起来才像同一道残影而不是另一只角色跟着跑。
-     *
-     * <p>素材缺失时退回矢量方块：拖尾是冲刺唯一的视觉反馈，不该因为图片加载失败就整个消失。
+     * <p>位置、朝向、形态和动作时间均取生成时的快照，冲刺结束或切界后只淡出，不换姿势。
      */
     private void drawDashTrail(GraphicsContext g, Player player, boolean light) {
         List<DashTrailPoint> trail = player.getDashTrail();
         if (trail.isEmpty()) return;
-        double directionX = player.getDashDirectionX();
-        double directionY = player.getDashDirectionY();
-        String direction = spriteDirection(directionX, directionY);
-        boolean mirror = direction.equals("left");
-        String assetDirection = mirror ? "right" : direction;
-        Map<String, Image[]> all = light ? LIGHT_FRAMES : SHADOW_FRAMES;
-        Image[] frames = all.getOrDefault("move_" + assetDirection, new Image[0]);
-        Image sprite = frames.length == 0 ? null : frames[0];
-        double drawW = 160.0;
-        double drawH = sprite == null ? 0.0 : drawW * sprite.getHeight() / Math.max(1.0, sprite.getWidth());
+        double drawW = PlayerAnimationCatalog.WIDTH;
+        double drawH = PlayerAnimationCatalog.HEIGHT;
         for (DashTrailPoint point : trail) {
             // life() 从 1（刚生成）衰减到 0（消散），所以越靠后的残影越淡。
             double alpha = GameConfig.DASH_TRAIL_ALPHA * point.life();
             if (alpha <= 0.01) continue;
-            double left = Math.rint(point.x() - drawW / 2.0);
-            double top = Math.rint(point.y() - drawH * 0.58);
-            if (sprite != null) {
-                g.setGlobalAlpha(alpha);
-                g.drawImage(sprite, mirror ? left + drawW : left, top, mirror ? -drawW : drawW, drawH);
-            } else {
-                g.setGlobalAlpha(alpha);
-                g.setFill(light ? LIGHT_GOLD : SHADOW_VIOLET);
-                g.fillRect(Math.rint(point.x() - 13.0), Math.rint(point.y() - 18.0), 26, 36);
-            }
+            Image sprite = PlayerSprites.frame(point.world() == WorldType.LIGHT, "dodge",
+                    point.directionX(), point.directionY(), point.animationTime());
+            double left = Math.rint(point.x() - PlayerAnimationCatalog.ANCHOR_X);
+            double top = Math.rint(point.y() - PlayerAnimationCatalog.ANCHOR_Y);
+            g.setGlobalAlpha(alpha);
+            g.drawImage(sprite, left, top, drawW, drawH);
         }
         g.setGlobalAlpha(1.0);
     }
@@ -2032,9 +2048,7 @@ public final class GameRenderer {
     private static Map<String, Image[]> loadCharacterFrames(String palette) {
         Map<String, Image[]> result = new HashMap<>();
         String[][] specs = {
-                {"idle_front", "2"}, {"idle_back", "1"}, {"idle_right", "1"},
-                {"move_front", "2"}, {"move_back", "2"}, {"move_right", "4"},
-                {"cast_right", "6"}, {"slash_right", "5"}, {"slash_recover_front", "6"},
+                // V3 does not include death poses; keep only these legacy body assets.
                 {"down_front", "1"}, {"down_back", "1"}, {"down_right", "2"}
         };
         for (String[] spec : specs) result.put(spec[0], loadSeries(palette, "characters", spec[0], Integer.parseInt(spec[1])));

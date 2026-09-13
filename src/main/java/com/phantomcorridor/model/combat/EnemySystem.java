@@ -203,8 +203,8 @@ public final class EnemySystem {
                 || (difficulty == Difficulty.HARD && currentWave == 1);
         for (int i = 0; i < count; i++) {
             // 精英替换：概率随层数提高（第 1 层没精英，让玩家先认熟基础招式），总量不变。
-            boolean elite = (i == count - 1 && random.nextDouble() < eliteChance)
-                    || (guaranteedElite && i == 0);
+            boolean elite = guaranteedElite ? i == 0
+                    : i == count - 1 && random.nextDouble() < eliteChance;
             EnemyKind kind = elite
                     ? ELITE_POOL[random.nextInt(ELITE_POOL.length)]
                     : BATTLE_POOL[random.nextInt(BATTLE_POOL.length)];
@@ -310,7 +310,7 @@ public final class EnemySystem {
             double fireRange = attackRange(enemy.getKind());
             boolean lineOfSight = distance <= fireRange
                     && navigation.isSegmentClear(enemy.getX(), enemy.getY(),
-                    player.getX(), player.getY(), GameConfig.ENEMY_PROJECTILE_RADIUS, enemy.getWorld());
+                    player.getX(), player.getY(), GameConfig.ENEMY_PROJECTILE_RADIUS, player.getCurrentWorld());
             maybeEscapeWedge(enemy, player, navigation, dt, distance, lineOfSight);
             moveTowardPlayer(enemy, player, navigation, dt, lineOfSight);
             // 打不到玩家的时间只对首领有意义：它就是“该喊增援了”的计时器。
@@ -889,7 +889,7 @@ public final class EnemySystem {
                 if (!skill.crossWalls()
                         && !navigation.isPathClearTo(enemy.getX(), enemy.getY(), x, y, radius, enemy.getWorld())) continue;
                 if (navigation.isSegmentClear(x, y, player.getX(), player.getY(),
-                        GameConfig.ENEMY_PROJECTILE_RADIUS, enemy.getWorld())) {
+                        GameConfig.ENEMY_PROJECTILE_RADIUS, player.getCurrentWorld())) {
                     return new double[]{x, y};
                 }
                 if (fallback == null) fallback = new double[]{x, y};
@@ -988,7 +988,7 @@ public final class EnemySystem {
                 if (!navigation.canOccupy(x, y, radius, enemy.getWorld())) continue;
                 if (Math.hypot(x - enemy.getX(), y - enemy.getY()) > GameConfig.WATCHER_BLINK_RANGE) continue;
                 if (navigation.isSegmentClear(x, y, player.getX(), player.getY(),
-                        GameConfig.ENEMY_PROJECTILE_RADIUS, enemy.getWorld())) {
+                        GameConfig.ENEMY_PROJECTILE_RADIUS, player.getCurrentWorld())) {
                     return new double[]{x, y};
                 }
                 if (fallback == null) fallback = new double[]{x, y};
@@ -2034,11 +2034,10 @@ public final class EnemySystem {
     /**
      * 招式伤害随本局难度缩放。
      *
-     * <p>与敌人的生命、防御用同一个倍率：难度改的是双方数值的整体刻度，
-     * 而不是单方面把敌人堆厚（否则高难度只会变成“同样的招式挨更多下才死”）。
+     * <p>敌方伤害独立于敌人生命和玩家输出刻度，高难度保留更多容错。
      */
     private double scaledDamage(EnemySkill skill) {
-        return skill.damage() * difficulty.playerDamageMultiplier();
+        return skill.damage() * difficulty.enemyDamageMultiplier();
     }
 
     /**
@@ -2085,7 +2084,7 @@ public final class EnemySystem {
             if (!attack.isActive()) continue;
             // 飞行弹体才受墙阻挡；地裂、斩击、钟波等短暂地面判定不能因为效果范围比敌人碰撞半径大
             // 就在生成当帧被导航系统提前清除。会反弹的弹体撞墙时按法线折返，而不是消失。
-            if (attack.isMoving() && !advanceOrBounce(attack, oldX, oldY, dt, navigation)) attack.expire();
+            if (attack.isMoving() && !advanceOrBounce(attack, oldX, oldY, dt, navigation, player.getCurrentWorld())) attack.expire();
             if (!attack.isExpired() && attack.getDamage() > 0.0
                     && CollisionUtil.circleIntersectsCircle(attack.getX(), attack.getY(), attack.getRadius(),
                     player.getX(), player.getY(), GameConfig.PLAYER_RADIUS)) {
@@ -2190,11 +2189,11 @@ public final class EnemySystem {
      * 三个方向都被挡住、或者已经没有反弹次数了，弹体才真的消失——
      * 这样反弹弹不会在窄缝里无限弹射，也不会穿墙。
      */
-    private boolean advanceOrBounce(EnemyAttack attack, double oldX, double oldY, double dt,
-                                    RoomNavigationSystem navigation) {
-        if (navigation.canProjectileOccupy(attack.getX(), attack.getY(), attack.getRadius(), attack.getWorld())
+    boolean advanceOrBounce(EnemyAttack attack, double oldX, double oldY, double dt,
+                                    RoomNavigationSystem navigation, WorldType collisionWorld) {
+        if (navigation.canProjectileOccupy(attack.getX(), attack.getY(), attack.getRadius(), collisionWorld)
                 && navigation.isSegmentClear(oldX, oldY, attack.getX(), attack.getY(),
-                attack.getRadius(), attack.getWorld())) {
+                attack.getRadius(), collisionWorld)) {
             return true;
         }
         if (!attack.isBouncing()) return false;
@@ -2205,8 +2204,8 @@ public final class EnemySystem {
             double nx = oldX + candidate[0] * dt;
             double ny = oldY + candidate[1] * dt;
             if (Math.hypot(nx - oldX, ny - oldY) < GameConfig.ENEMY_BOUNCE_MIN_STEP) continue;
-            if (!navigation.canProjectileOccupy(nx, ny, attack.getRadius(), attack.getWorld())) continue;
-            if (!navigation.isSegmentClear(oldX, oldY, nx, ny, attack.getRadius(), attack.getWorld())) continue;
+            if (!navigation.canProjectileOccupy(nx, ny, attack.getRadius(), collisionWorld)) continue;
+            if (!navigation.isSegmentClear(oldX, oldY, nx, ny, attack.getRadius(), collisionWorld)) continue;
             attack.setPosition(nx, ny);
             attack.reflect(candidate[0], candidate[1]);
             return true;

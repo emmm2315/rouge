@@ -1,0 +1,375 @@
+{
+  "assetSet": "character_assets_v3_atlas_rebuild_20260913",
+  "sourcePolicy": "direct_grid_crop_from_original_rgba_atlases",
+  "projectIntegrated": false,
+  "sourceAtlasCount": 16,
+  "frameCount": 256,
+  "forms": [
+    "light",
+    "shadow"
+  ],
+  "actions": [
+    "idle",
+    "move",
+    "attack",
+    "hit",
+    "dodge",
+    "invulnerable",
+    "transition",
+    "finisher_cast"
+  ],
+  "directions": [
+    "down",
+    "up",
+    "left",
+    "right"
+  ],
+  "phaseOrder": [
+    "phase_00",
+    "phase_01",
+    "phase_02",
+    "phase_03"
+  ],
+  "alpha": {
+    "format": "RGBA",
+    "background": "fully transparent",
+    "colorKeyRemoval": false
+  },
+  "cell": {
+    "width": 256,
+    "height": 256
+  },
+  "canvas": {
+    "width": 320,
+    "height": 256,
+    "safeMargin": 12
+  },
+  "anchor": {
+    "name": "chest_center",
+    "x": 160,
+    "y": 140,
+    "notes": "each 256px source cell is placed on a fixed 320x256 transparent canvas; no content crop or color-key removal"
+  },
+  "sequences": {
+    "light/attack/down": {
+      "fps": 24,
+      "frames": 4,
+      "loop": false
+    },
+    "light/attack/up": {
+      "fps": 24,
+      "frames": 4,
+      "loop": false
+    },
+    "light/attack/left": {
+      "fps": 24,
+      "frames": 4,
+      "loop": false
+    },
+    "light/attack/right": {
+      "fps": 24,
+      "frames": 4,
+      "loop": false
+    },
+    "light/dodge/down": {
+      "fps": 24,
+      "frames": 4,
+      "loop": false
+    },
+    "light/dodge/up": {
+      "fps": 24,
+      "frames": 4,
+      "loop": false
+    },
+    "light/dodge/left": {
+      "fps": 24,
+      "frames": 4,
+      "loop": false
+    },
+    "light/dodge/right": {
+      "fps": 24,
+      "frames": 4,
+      "loop": false
+    },
+    "light/finisher_cast/down": {
+      "fps": 20,
+      "frames": 4,
+      "loop": false
+    },
+    "light/finisher_cast/up": {
+      "fps": 20,
+      "frames": 4,
+      "loop": false
+    },
+    "light/finisher_cast/left": {
+      "fps": 20,
+      "frames": 4,
+      "loop": false
+    },
+    "light/finisher_cast/right": {
+      "fps": 20,
+      "frames": 4,
+      "loop": false
+    },
+    "light/hit/down": {
+      "fps": 12,
+      "frames": 4,
+      "loop": false
+    },
+    "light/hit/up": {
+      "fps": 12,
+      "frames": 4,
+      "loop": false
+    },
+    "light/hit/left": {
+      "fps": 12,
+      "frames": 4,
+      "loop": false
+    },
+    "light/hit/right": {
+      "fps": 12,
+      "frames": 4,
+      "loop": false
+    },
+    "light/idle/down": {
+      "fps": 12,
+      "frames": 4,
+      "loop": true
+    },
+    "light/idle/up": {
+      "fps": 12,
+      "frames": 4,
+      "loop": true
+    },
+    "light/idle/left": {
+      "fps": 12,
+      "frames": 4,
+      "loop": true
+    },
+    "light/idle/right": {
+      "fps": 12,
+      "frames": 4,
+      "loop": true
+    },
+    "light/invulnerable/down": {
+      "fps": 16,
+      "frames": 4,
+      "loop": true
+    },
+    "light/invulnerable/up": {
+      "fps": 16,
+      "frames": 4,
+      "loop": true
+    },
+    "light/invulnerable/left": {
+      "fps": 16,
+      "frames": 4,
+      "loop": true
+    },
+    "light/invulnerable/right": {
+      "fps": 16,
+      "frames": 4,
+      "loop": true
+    },
+    "light/move/down": {
+      "fps": 18,
+      "frames": 4,
+      "loop": true
+    },
+    "light/move/up": {
+      "fps": 18,
+      "frames": 4,
+      "loop": true
+    },
+    "light/move/left": {
+      "fps": 18,
+      "frames": 4,
+      "loop": true
+    },
+    "light/move/right": {
+      "fps": 18,
+      "frames": 4,
+      "loop": true
+    },
+    "light/transition/down": {
+      "fps": 18,
+      "frames": 4,
+      "loop": false
+    },
+    "light/transition/up": {
+      "fps": 18,
+      "frames": 4,
+      "loop": false
+    },
+    "light/transition/left": {
+      "fps": 18,
+      "frames": 4,
+      "loop": false
+    },
+    "light/transition/right": {
+      "fps": 18,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/attack/down": {
+      "fps": 24,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/attack/up": {
+      "fps": 24,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/attack/left": {
+      "fps": 24,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/attack/right": {
+      "fps": 24,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/dodge/down": {
+      "fps": 24,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/dodge/up": {
+      "fps": 24,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/dodge/left": {
+      "fps": 24,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/dodge/right": {
+      "fps": 24,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/finisher_cast/down": {
+      "fps": 20,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/finisher_cast/up": {
+      "fps": 20,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/finisher_cast/left": {
+      "fps": 20,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/finisher_cast/right": {
+      "fps": 20,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/hit/down": {
+      "fps": 12,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/hit/up": {
+      "fps": 12,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/hit/left": {
+      "fps": 12,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/hit/right": {
+      "fps": 12,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/idle/down": {
+      "fps": 12,
+      "frames": 4,
+      "loop": true
+    },
+    "shadow/idle/up": {
+      "fps": 12,
+      "frames": 4,
+      "loop": true
+    },
+    "shadow/idle/left": {
+      "fps": 12,
+      "frames": 4,
+      "loop": true
+    },
+    "shadow/idle/right": {
+      "fps": 12,
+      "frames": 4,
+      "loop": true
+    },
+    "shadow/invulnerable/down": {
+      "fps": 16,
+      "frames": 4,
+      "loop": true
+    },
+    "shadow/invulnerable/up": {
+      "fps": 16,
+      "frames": 4,
+      "loop": true
+    },
+    "shadow/invulnerable/left": {
+      "fps": 16,
+      "frames": 4,
+      "loop": true
+    },
+    "shadow/invulnerable/right": {
+      "fps": 16,
+      "frames": 4,
+      "loop": true
+    },
+    "shadow/move/down": {
+      "fps": 18,
+      "frames": 4,
+      "loop": true
+    },
+    "shadow/move/up": {
+      "fps": 18,
+      "frames": 4,
+      "loop": true
+    },
+    "shadow/move/left": {
+      "fps": 18,
+      "frames": 4,
+      "loop": true
+    },
+    "shadow/move/right": {
+      "fps": 18,
+      "frames": 4,
+      "loop": true
+    },
+    "shadow/transition/down": {
+      "fps": 18,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/transition/up": {
+      "fps": 18,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/transition/left": {
+      "fps": 18,
+      "frames": 4,
+      "loop": false
+    },
+    "shadow/transition/right": {
+      "fps": 18,
+      "frames": 4,
+      "loop": false
+    }
+  }
+}

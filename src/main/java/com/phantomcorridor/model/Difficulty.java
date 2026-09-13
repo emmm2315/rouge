@@ -3,8 +3,7 @@ package com.phantomcorridor.model;
 /**
  * 难度控制敌人基础属性及每波数量，属性与层数成长叠加。
  *
- * <p>玩家的生命、金币与装备完全不变——难度是给同一套数值换一个起点，
- * 而不是换一套规则，这样不同难度下的地图、房间内容与掉落都还能横向对比。
+ * <p>生命、防御的刻度与玩家基础输出同步；敌方伤害、Boss 耐久和装备收益独立调节。
  *
  * <p>倍率作用在物种基础值上：第 N 层的敌人生命 = {@code 基础 × 倍率 × (1 + (N-1) × 0.25)}，
  * 防御同理；简单难度下防御会被压到更低的档位，困难与屌炸天则更早堆起来。
@@ -12,16 +11,16 @@ package com.phantomcorridor.model;
 public enum Difficulty {
 
     /** 简单：敌人基础属性 50% */
-    EASY("简单", 0.5, "每波 3～4 只，敌人生命与防御 50%"),
+    EASY("简单", 0.5, "每波 3 只，敌伤 50%，适合熟悉招式"),
 
     /** 标准：基准难度 */
     NORMAL("标准", 1.0, "每波 3～4 只，精英比简单更多"),
 
     /** 困难：敌人基础属性 150% */
-    HARD("困难", 1.5, "每波 3～5 只，至少一波含精英"),
+    HARD("困难", 1.5, "每波 3～4 只，敌伤 115%，每件装备额外增伤 5%"),
 
     /** 屌炸天：敌人基础属性 200% */
-    INSANE("屌炸天", 2.0, "每波 4～5 只，每波至少一只精英");
+    INSANE("屌炸天", 2.0, "每波 3～4 只、保底精英，敌伤 130%，每件装备额外增伤 10%");
 
     private final String displayName;
     private final double enemyStatMultiplier;
@@ -33,13 +32,28 @@ public enum Difficulty {
         this.description = description;
     }
 
-    public int minWaveEnemies() { return this == INSANE ? 4 : 3; }
+    public int minWaveEnemies() { return 3; }
 
-    public int maxWaveEnemies() { return this == HARD || this == INSANE ? 5 : 4; }
+    public int maxWaveEnemies() { return this == EASY ? 3 : 4; }
+
+    /** 独立于生命刻度，避免高难度弹幕密度与翻倍伤害同时惩罚玩家。 */
+    public double enemyDamageMultiplier() { return switch (this) {
+        case EASY -> 0.5; case NORMAL -> 1.0; case HARD -> 1.15; case INSANE -> 1.30;
+    }; }
+
+    /** 在原有生命刻度上缩短 Boss 战；普通怪与召唤物不受此系数影响。 */
+    public double bossHealthMultiplier() { return switch (this) {
+        case EASY, NORMAL -> 1.0; case HARD -> 0.90; case INSANE -> 0.70;
+    }; }
+
+    /** 每个已装备槽提供的额外加算伤害，三槽封顶；所有装备都能受益。 */
+    public double equipmentSlotDamageBonus() { return switch (this) {
+        case EASY, NORMAL -> 0.0; case HARD -> 0.05; case INSANE -> 0.10;
+    }; }
 
     /** 战斗房精英概率：标准明确高于简单，困难/屌炸天由波次保证兜底。 */
     public double eliteWaveChance() { return switch (this) {
-        case EASY -> 0.15; case NORMAL -> 0.35; case HARD, INSANE -> 1.0;
+        case EASY -> 0.15; case NORMAL -> 0.35; case HARD -> 0.55; case INSANE -> 1.0;
     }; }
 
     public String displayName() { return displayName; }
