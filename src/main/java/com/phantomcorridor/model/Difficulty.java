@@ -1,7 +1,7 @@
 package com.phantomcorridor.model;
 
 /**
- * 难度：只改敌人的**基础属性**（生命与防御），与层数成长相乘叠加。
+ * 难度控制敌人基础属性及每波数量，属性与层数成长叠加。
  *
  * <p>玩家的生命、金币与装备完全不变——难度是给同一套数值换一个起点，
  * 而不是换一套规则，这样不同难度下的地图、房间内容与掉落都还能横向对比。
@@ -12,16 +12,16 @@ package com.phantomcorridor.model;
 public enum Difficulty {
 
     /** 简单：敌人基础属性 50% */
-    EASY("简单", 0.5, "敌人生命与防御 50%，先摸清机制"),
+    EASY("简单", 0.5, "每波 3～4 只，敌人生命与防御 50%"),
 
     /** 标准：基准难度 */
-    NORMAL("标准", 1.0, "敌人属性基准值，推荐首次通关"),
+    NORMAL("标准", 1.0, "每波 3～4 只，精英比简单更多"),
 
     /** 困难：敌人基础属性 150% */
-    HARD("困难", 1.5, "敌人生命与防御 150%，容错更低"),
+    HARD("困难", 1.5, "每波 3～5 只，至少一波含精英"),
 
     /** 屌炸天：敌人基础属性 200% */
-    INSANE("屌炸天", 2.0, "敌人生命与防御 200%，走错一步就重来");
+    INSANE("屌炸天", 2.0, "每波 4～5 只，每波至少一只精英");
 
     private final String displayName;
     private final double enemyStatMultiplier;
@@ -32,6 +32,15 @@ public enum Difficulty {
         this.enemyStatMultiplier = enemyStatMultiplier;
         this.description = description;
     }
+
+    public int minWaveEnemies() { return this == INSANE ? 4 : 3; }
+
+    public int maxWaveEnemies() { return this == HARD || this == INSANE ? 5 : 4; }
+
+    /** 战斗房精英概率：标准明确高于简单，困难/屌炸天由波次保证兜底。 */
+    public double eliteWaveChance() { return switch (this) {
+        case EASY -> 0.15; case NORMAL -> 0.35; case HARD, INSANE -> 1.0;
+    }; }
 
     public String displayName() { return displayName; }
 

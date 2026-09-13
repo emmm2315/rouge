@@ -23,13 +23,16 @@ class WorldShiftSystemTest {
     }
 
     @Test
-    void cannotShiftWithoutFullEnergy() {
+    void basicShiftWorksWithoutEnergyAndWithoutPulse() {
         Player player = new Player(100, 100);
         WorldShiftSystem system = new WorldShiftSystem();
         assertTrue(system.tryShift(player));
+        system.consumePulse();
         system.update(GameConfig.WORLD_SWITCH_COOLDOWN);
 
-        assertFalse(system.tryShift(player));
-        assertEquals(WorldType.SHADOW, player.getCurrentWorld());
+        assertTrue(system.tryShift(player));
+        assertFalse(system.consumePulse());
+        assertTrue(player.isShiftSlowed());
+        assertEquals(WorldType.LIGHT, player.getCurrentWorld());
     }
 }

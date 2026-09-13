@@ -153,6 +153,12 @@ public final class GameSession {
         }
         enemies.update(dt, player, attackSystem, navigation);
         applyHitKnockback();
+        if (enemies.consumePhaseTransitions() > 0) {
+            EnemyKind transformed = getBossKind();
+            roomAnnouncement = (transformed == null ? "首领" : transformed.displayName()) + " · 二阶段"
+                    + " · 招牌机制启动";
+            roomAnnouncementRemaining = 2.0;
+        }
         // 首领起手召唤时给一条即时提示：裂隙本身画在地上，但玩家常常正盯着首领看。
         if (enemies.consumeSummonCalls() > 0) {
             EnemyKind summoner = getBossKind();
@@ -211,6 +217,7 @@ public final class GameSession {
             phasePulseVisibleRemaining = GameConfig.PHASE_PULSE_VISIBLE_TIME;
         }
         // 切界成功：打开相位陀螺的攻速窗口，并结束夜行披风的影界加速。
+        attackSystem.cancelForWorldShift();
         player.onWorldShifted();
         enemies.onWorldChanged(player.getCurrentWorld());
         return true;

@@ -42,6 +42,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class MonsterExpansionTest {
 
+    @Test
+    void eachNewBossHasAnIndependentPhaseTwoSignatureSkill() {
+        assertTrue(EnemySkill.CRAB_PHASE_OVERLOAD.phaseTwoOnly());
+        assertTrue(EnemySkill.MANTIS_PHASE_HUNT.phaseTwoOnly());
+        assertTrue(EnemySkill.WEAVER_PHASE_NEST.phaseTwoOnly());
+        assertTrue(EnemySkill.ROOTKING_PHASE_GARDEN.phaseTwoOnly());
+        assertTrue(EnemySkill.HOURGLASS_PHASE_ECHO.phaseTwoOnly());
+        assertEquals(EnemySkill.Pattern.BARRAGE, EnemySkill.CRAB_PHASE_OVERLOAD.pattern());
+        assertEquals(EnemySkill.Pattern.CHARGE, EnemySkill.MANTIS_PHASE_HUNT.pattern());
+        assertEquals(EnemySkill.Pattern.BAND, EnemySkill.WEAVER_PHASE_NEST.pattern());
+        assertEquals(EnemySkill.Pattern.WALL, EnemySkill.ROOTKING_PHASE_GARDEN.pattern());
+        assertEquals(EnemySkill.Pattern.MULTI_MARK, EnemySkill.HOURGLASS_PHASE_ECHO.pattern());
+    }
+
     private static final double DT = 1.0 / 60.0;
 
     /** v2 扩展包的八个物种。 */

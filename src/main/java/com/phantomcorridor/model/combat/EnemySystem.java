@@ -26,10 +26,10 @@ import java.util.Random;
 import java.util.Set;
 
 /**
- * 敌人生成、同界 AI、伤害以及清房门禁的纯逻辑系统。
+ * 共享敌人生成、AI、属性伤害以及清房门禁的纯逻辑系统。
  *
- * <p>索敌规则：同界敌人只要与玩家同处一房就会锁定玩家并主动接近（见 {@link #detectionRange()}），
- * 被墙挡住视线时继续绕行接近、只有确实看得见玩家时才开火；玩家换界后敌人丢失目标，重新索敌。
+ * <p>索敌规则：敌人只要与玩家同处一房就会锁定玩家并主动接近（见 {@link #detectionRange()}），
+ * 被墙挡住视线时继续绕行接近、只有确实看得见玩家时才开火；玩家换界后敌人继续索敌与施法。
  *
  * <p>首领另有召唤机制：裂隙先成型、召唤物后落地，什么时候召唤由血量阶段、打不到玩家的时长
  * 与场上剩余召唤物共同决定（见 {@link #beginSummonIfDue}）。
@@ -97,8 +97,25 @@ public final class EnemySystem {
     /** 已经结算过的命中标识：多段招式靠它区分“同一段的重复判定”和“下一段”。 */
     private final Set<Long> consumedHitIds = new HashSet<>();
     private int activeRoomId = -1;
+    private Room waveRoom;
+    private long waveSeed;
+    private int currentWave;
+    private int totalWaves;
+    private double waveDelay = -1.0;
+
+    private void resetWaves() {
+        waveRoom = null;
+        currentWave = totalWaves = 0;
+        waveDelay = -1.0;
+    }
+
+    public int getCurrentWave() { return currentWave; }
+    public int getTotalWaves() { return totalWaves; }
+    public boolean isBetweenWaves() { return waveDelay >= 0.0; }
+
     private int killsSinceLastRead;
     private int summonCallsSinceLastRead;
+    private int phaseTransitionsSinceLastRead;
     private int floor = 1;
     private Difficulty difficulty = Difficulty.NORMAL;
     /** 当前房间的导航系统（只读引用，用于视线判定；没有房间时为 null）。 */
@@ -109,6 +126,7 @@ public final class EnemySystem {
     public BlinkFlash getBlinkFlash() { return blinkFlash; }
 
     public void reset() {
+        resetWaves();
         enemies.clear();
         attacks.clear();
         visualEffects.clear();
@@ -123,6 +141,7 @@ public final class EnemySystem {
         activeRoomId = -1;
         killsSinceLastRead = 0;
         summonCallsSinceLastRead = 0;
+        phaseTransitionsSinceLastRead = 0;
         blinkFlash = null;
     }
 
@@ -141,6 +160,7 @@ public final class EnemySystem {
     /** 仅在未清理的战斗/Boss 房生成；Boss 房严格只生成一名首领（按层从 {@link BossRoster} 取）。 */
     public void enterRoom(Room room, long dungeonSeed, Player player, RoomNavigationSystem navigation) {
         if (activeRoomId == room.id()) return;
+        resetWaves();
         enemies.clear();
         attacks.clear();
         visualEffects.clear();
@@ -150,6 +170,7 @@ public final class EnemySystem {
         pendingWalls.clear();
         consumedHitIds.clear();
         activeCasts.clear();
+        phaseTransitionsSinceLastRead = 0;
         // 房间级临时地形只在生出它的那场战斗里有效；换房时连导航层一起清掉。
         if (navigation != null) navigation.clearTemporaryWalls();
         activeRoomId = room.id();
@@ -162,17 +183,49 @@ public final class EnemySystem {
             spawn(boss, WorldType.LIGHT, room, player, navigation, random);
             return;
         }
-        int count = GameConfig.battleEnemyCount(floor,
-                random.nextInt(GameConfig.BATTLE_ENEMY_MAX - GameConfig.BATTLE_ENEMY_MIN + 1));
-        double eliteChance = GameConfig.battleEliteChance(floor);
+        waveRoom = room;
+        waveSeed = dungeonSeed ^ ((long) room.id() * 0x9E3779B97F4A7C15L);
+        totalWaves = 1 + random.nextInt(GameConfig.BATTLE_WAVE_MAX);
+        spawnNextWave(player, navigation);
+    }
+
+    private void spawnNextWave(Player player, RoomNavigationSystem navigation) {
+        currentWave++;
+        waveDelay = -1.0;
+        Room room = waveRoom;
+        Random random = new Random(waveSeed + currentWave * 0x632BE59BD9B4E019L);
+        Random placement = new Random(waveSeed ^ currentWave);
+        int count = difficulty.minWaveEnemies()
+                + random.nextInt(difficulty.maxWaveEnemies() - difficulty.minWaveEnemies() + 1);
+        double eliteChance = floor < GameConfig.BATTLE_ELITE_MIN_FLOOR
+                ? 0.0 : difficulty.eliteWaveChance();
+        boolean guaranteedElite = difficulty == Difficulty.INSANE
+                || (difficulty == Difficulty.HARD && currentWave == 1);
         for (int i = 0; i < count; i++) {
             // 精英替换：概率随层数提高（第 1 层没精英，让玩家先认熟基础招式），总量不变。
-            EnemyKind kind = i == count - 1 && random.nextDouble() < eliteChance
+            boolean elite = (i == count - 1 && random.nextDouble() < eliteChance)
+                    || (guaranteedElite && i == 0);
+            EnemyKind kind = elite
                     ? ELITE_POOL[random.nextInt(ELITE_POOL.length)]
                     : BATTLE_POOL[random.nextInt(BATTLE_POOL.length)];
             WorldType world = i % 2 == 0 ? WorldType.LIGHT : WorldType.SHADOW;
-            spawn(kind, world, room, player, navigation, random);
+            spawn(kind, world, room, player, navigation, placement);
         }
+    }
+
+    private void advanceWaves(double dt, Player player, RoomNavigationSystem navigation) {
+        if (waveRoom == null || currentWave >= totalWaves || !enemies.isEmpty()
+                || player.getHp() <= 0) return;
+        if (waveDelay < 0.0) {
+            waveDelay = GameConfig.BATTLE_WAVE_INTERVAL;
+            attacks.clear();
+            telegraphs.clear();
+            activeCasts.clear();
+            consumedHitIds.clear();
+            return;
+        }
+        waveDelay = Math.max(0.0, waveDelay - Math.max(0.0, dt));
+        if (waveDelay == 0.0) spawnNextWave(player, navigation);
     }
 
     private void spawn(EnemyKind kind, WorldType world, Room room, Player player,
@@ -185,9 +238,13 @@ public final class EnemySystem {
             RoomArea area = room.areas().get(random.nextInt(room.areas().size()));
             double x = area.x() + 58 + random.nextDouble() * Math.max(1, area.width() - 116);
             double y = area.y() + 58 + random.nextDouble() * Math.max(1, area.height() - 116);
-            if (Math.hypot(x - player.getX(), y - player.getY()) < 170) continue;
+            if (Math.hypot(x - player.getX(), y - player.getY()) < GameConfig.ENEMY_SPAWN_SAFE_DISTANCE) continue;
             if (navigation.canOccupy(x, y, radius, world)) {
+                final double spawnX = x, spawnY = y;
+                if (enemies.stream().anyMatch(other -> Math.hypot(other.getX() - spawnX,
+                        other.getY() - spawnY) < enemyRadius(other) + radius + 24)) continue;
                 enemy.setPosition(x, y);
+                if (!enemy.isBoss()) enemy.beginSpawnGrace();
                 enemies.add(enemy);
                 return;
             }
@@ -202,6 +259,7 @@ public final class EnemySystem {
         this.navigation = navigation;
         updateBlinkFlash(dt);
         updateDamageFlashes(dt);
+        enemies.forEach(enemy -> enemy.updateTimers(dt));
         resolvePlayerHits(player, playerAttacks);
         visualEffects.forEach(effect -> effect.update(dt));
         visualEffects.removeIf(EnemyVisualEffect::expired);
@@ -210,7 +268,6 @@ public final class EnemySystem {
         boolean bossCrossedOver = false;
         for (var iterator = enemies.iterator(); iterator.hasNext();) {
             Enemy enemy = iterator.next();
-            enemy.updateTimers(dt);
             if (enemy.isDead()) {
                 visualEffects.add(EnemyVisualEffect.body(enemy.getKind(), enemy.getWorld(), "death", enemy.getFacing(),
                         enemy.getX(), enemy.getY(), displayWidth(enemy.getKind()), .70));
@@ -223,6 +280,8 @@ public final class EnemySystem {
             // 首领在半血时从光界进入暗界，保留同一实体与血量。
             if (enemy.isBoss() && enemy.getHp() * 2 <= enemy.getMaxHp() && enemy.getWorld() == WorldType.LIGHT) {
                 enemy.setWorld(WorldType.SHADOW);
+                enemy.enterPhaseTwo();
+                phaseTransitionsSinceLastRead++;
                 attacks.removeIf(attack -> attack.getSource() == enemy.getKind());
                 telegraphs.removeIf(telegraph -> telegraph.source() == enemy.getKind());
                 activeCasts.remove(enemy);
@@ -235,7 +294,7 @@ public final class EnemySystem {
                 // 真正清理由循环外的 collapseSummons 执行——在遍历 enemies 时删除会直接抛并发修改异常。
                 bossCrossedOver = true;
             }
-            if (enemy.getWorld() != player.getCurrentWorld()) continue;
+            if (enemy.getAnimationAction().equals("transform") && !enemy.isAnimationFinished()) continue;
             if (advanceCast(enemy, player, navigation)) continue;
             if (enemy.getAnimationAction().equals("hurt") && !enemy.isAnimationFinished()) continue;
             if (enemy.getAnimationAction().equals("hurt")) enemy.playAnimation("idle", 1.0 / 6.0, true);
@@ -243,6 +302,7 @@ public final class EnemySystem {
             if (enemy.getAnimationAction().equals("guard")) enemy.playAnimation("idle", 1.0 / 6.0, true);
             double distance = Math.hypot(enemy.getX() - player.getX(), enemy.getY() - player.getY());
             if (!acquireTarget(enemy, distance)) continue;
+            if (enemy.isSpawning()) continue;
             // 索敌成功后即使隔着墙/障碍也会持续接近；只有真正看得见玩家时才开火。
             // 视线用弹体半径探测：判定的其实是“这条线上弹体能不能飞过去”。
             // 若用敌人自身半径（首领 46 像素），玩家只要站在只有更小身位放得下的位置，
@@ -274,6 +334,7 @@ public final class EnemySystem {
         updateRootWalls(dt, navigation);
         updateSummonRifts(dt, navigation);
         updateEnemyAttacks(dt, player, navigation);
+        advanceWaves(dt, player, navigation);
     }
 
     /** 裂隙特效只是视觉残留，按剩余时间自然消退。 */
@@ -303,6 +364,13 @@ public final class EnemySystem {
 
     /** 场上还没结算 / 还在表现的预警实体。 */
     public List<EnemyTelegraph> getTelegraphs() { return Collections.unmodifiableList(telegraphs); }
+
+    /** 自上帧以来完成的首领二阶段转换次数，供会话提示层消费。 */
+    public int consumePhaseTransitions() {
+        int count = phaseTransitionsSinceLastRead;
+        phaseTransitionsSinceLastRead = 0;
+        return count;
+    }
 
     /** 当前有效的临时阻挡地形（根篱），含只作装饰、不参与碰撞的那些。 */
     public List<RootWall> getRootWalls() { return Collections.unmodifiableList(rootWalls); }
@@ -351,7 +419,6 @@ public final class EnemySystem {
                 impactEffect(telegraph.source(), telegraph.world()), telegraph.x(), telegraph.y(),
                 telegraph.angleRadians(), Math.max(64, telegraph.radius() * 2.6), GameConfig.TELEGRAPH_RESIDUAL_TIME));
         if (telegraph.damage() <= 0.0 || telegraph.isFake()) return;
-        if (telegraph.world() != player.getCurrentWorld()) return;
         long hitId = telegraph.hitId();
         if (hitId != 0L && consumedHitIds.contains(hitId)) return;
         if (!telegraph.contains(player.getX(), player.getY(), GameConfig.PLAYER_RADIUS)) return;
@@ -447,6 +514,17 @@ public final class EnemySystem {
                 }
             }
             case MULTI_MARK -> createMarks(enemy, skill, cast);
+            case BARRAGE -> {
+                // 二阶段炮蟹过载先画一圈“炮幕将至”的预警；真正伤害仍由分轮弹体结算，
+                // 这里用 fake 预警避免同一轮被重复扣血。
+                if (skill.phaseTwoOnly()) {
+                    telegraphs.add(EnemyTelegraph.at(enemy.getKind(), enemy.getWorld(), skill.effect(),
+                                    EnemyTelegraph.Shape.RING_GAP, ex, ey,
+                                    Math.atan2(cast.targetY - ey, cast.targetX - ex))
+                            .ring(90, 285).safeGapDegrees(48).damage(0).warn(warn)
+                            .fake().residual(residual).castId(cast.castId).build());
+                }
+            }
             case CHARGE -> {
                 // 冲撞的危险区就是那条锁定直线；真到释放时若撞墙提前停下，会在这里被改短。
                 telegraphs.add(EnemyTelegraph
@@ -1003,7 +1081,7 @@ public final class EnemySystem {
     /**
      * 索敌判定：描述敌人这一帧是否“发现”玩家。
      *
-     * <p>整房索敌开启时（{@link GameConfig#ENEMY_AGGRO_WHOLE_ROOM}），同界敌人只要与玩家同处一房
+     * <p>整房索敌开启时（{@link GameConfig#ENEMY_AGGRO_WHOLE_ROOM}），敌人只要与玩家同处一房
      * 就会锁定并主动接近；锁定后不再受距离限制，会一直追到玩家换界或离开房间为止。
      */
     private static boolean acquireTarget(Enemy enemy, double distance) {
@@ -1044,7 +1122,9 @@ public final class EnemySystem {
         if (player.getCurrentWorld() == WorldType.SHADOW && playerAttacks.isMeleeVisible()) {
             int attackId = playerAttacks.getMeleeAttackId();
             for (Enemy enemy : enemies) {
-                if (enemy.getWorld() != WorldType.SHADOW || enemy.isDead()) continue;
+                if (enemy.isDead()) continue;
+                if (!hasLineOfSight(player.getX(), player.getY(), enemy.getHitboxCenterX(),
+                        enemy.getHitboxCenterY(), WorldType.SHADOW)) continue;
                 if (enemy.getLastMeleeHitId() == attackId) continue;
                 if (!meleeCovers(player, playerAttacks, enemy)) continue;
                 int dealt = applyDamage(player, enemy, playerAttacks.getMeleeCoefficient(),
@@ -1063,7 +1143,7 @@ public final class EnemySystem {
     /** 弹体命中的第一个合法敌人；穿透过的目标会被弹体自己记住，不会再中第二次。 */
     private Enemy firstEnemyHitBy(Projectile projectile) {
         for (Enemy enemy : enemies) {
-            if (enemy.isDead() || projectile.getWorld() != enemy.getWorld()) continue;
+            if (enemy.isDead()) continue;
             if (projectile.hasHit(enemy)) continue;
             if (CollisionUtil.circleIntersectsCircle(projectile.getX(), projectile.getY(), projectile.getRadius(),
                     enemy.getHitboxCenterX(), enemy.getHitboxCenterY(), enemy.getHitboxRadius())) {
@@ -1114,13 +1194,13 @@ public final class EnemySystem {
         if (!continues) projectile.expire();
     }
 
-    /** 弹射目标：命中点附近、同界、没被本弹体打过、且没有墙挡着的最近敌人。 */
+    /** 弹射目标：命中点附近、没被本弹体打过、且没有墙挡着的最近敌人。 */
     private Enemy nearestUnhitEnemy(Projectile projectile, Enemy justHit) {
         Enemy best = null;
         double bestDistance = GameConfig.MIRROR_ORB_BOUNCE_RADIUS;
         for (Enemy enemy : enemies) {
             if (enemy.isDead() || enemy == justHit) continue;
-            if (enemy.getWorld() != projectile.getWorld() || projectile.hasHit(enemy)) continue;
+            if (projectile.hasHit(enemy)) continue;
             double distance = Math.hypot(enemy.getHitboxCenterX() - projectile.getX(),
                     enemy.getHitboxCenterY() - projectile.getY());
             if (distance > bestDistance) continue;
@@ -1162,8 +1242,16 @@ public final class EnemySystem {
      * 所以要先知道这一击是从哪个方向来的（弹体当前位置 / 玩家位置 / 爆心）。
      */
     private int applyDamage(Player player, Enemy enemy, double coefficient, double fromX, double fromY) {
+        WorldType world = player.getCurrentWorld();
+        int stacks = world == WorldType.SHADOW ? enemy.consumeScorch() : 0;
+        if (world == WorldType.LIGHT) {
+            enemy.addScorch();
+        }
+        coefficient *= enemy.getKind().affinity().damageMultiplier(world, stacks > 0);
+        coefficient += stacks * GameConfig.SCORCH_DAMAGE_PER_STACK;
+        if (stacks > 0) player.restorePhaseEnergy(stacks * GameConfig.SCORCH_ENERGY_PER_STACK);
         double raw = player.getCurrentBaseDamage()
-                * coefficient * player.damageMultiplier(enemy.getWorld())
+                * coefficient * player.damageMultiplier(player.getCurrentWorld())
                 * hunterBonus(player, enemy);
         raw *= enemy.incomingDamageMultiplier(fromX, fromY);
         int dealt = enemy.takeHit(scaledPlayerDamage(raw));
@@ -1178,7 +1266,7 @@ public final class EnemySystem {
      * 第二段就不再享受加成（设计文档 §五-12）。
      */
     private static double hunterBonus(Player player, Enemy enemy) {
-        if (enemy.getWorld() != WorldType.SHADOW) return 1.0;
+        if (player.getCurrentWorld() != WorldType.SHADOW) return 1.0;
         if (player.equipmentCount(com.phantomcorridor.model.EquipmentType.HUNTERS_FANG) == 0) return 1.0;
         if (enemy.getMaxHp() <= 0) return 1.0;
         double ratio = enemy.getHp() / (double) enemy.getMaxHp();
@@ -1209,14 +1297,14 @@ public final class EnemySystem {
     }
 
     /**
-     * 范围伤害：对半径内、同界、且从爆心看得见的敌人各结算一次。
+     * 范围伤害：对半径内且从爆心看得见的敌人各结算一次。
      *
      * <p>视线检查是设计文档的硬要求——爆炸不能隔着墙输出（「以爆心做视线判定」）。
      */
     private void explodeAt(Player player, double x, double y, double coefficient,
                            double radius, WorldType world) {
         for (Enemy enemy : enemies) {
-            if (enemy.isDead() || enemy.getWorld() != world) continue;
+            if (enemy.isDead()) continue;
             double distance = Math.hypot(enemy.getHitboxCenterX() - x, enemy.getHitboxCenterY() - y);
             if (distance > radius + enemy.getHitboxRadius()) continue;
             if (!hasLineOfSight(x, y, enemy.getHitboxCenterX(), enemy.getHitboxCenterY(), world)) continue;
@@ -1429,8 +1517,13 @@ public final class EnemySystem {
     private EnemySkill chooseSkill(Enemy enemy, double distance) {
         List<EnemySkill> choices = EnemySkill.forEnemy(enemy.getKind(), enemy.getWorld()).stream()
                 .filter(skill -> skill.pattern() != EnemySkill.Pattern.SUMMON)
+                .filter(skill -> !skill.phaseTwoOnly() || enemy.isPhaseTwo())
                 .filter(skill -> distance <= skill.range()).toList();
         if (choices.isEmpty()) return null;
+        if (enemy.isPhaseTwo() && enemy.isPhaseSkillPending()) {
+            EnemySkill signature = choices.stream().filter(EnemySkill::phaseTwoOnly).findFirst().orElse(null);
+            if (signature != null) return signature;
+        }
         return choices.get(Math.floorMod(enemy.nextSkillIndex(), choices.size()));
     }
 
@@ -1445,6 +1538,7 @@ public final class EnemySystem {
         if (enemy.isBoss()) {
             if (skill.pattern() == EnemySkill.Pattern.SUMMON) enemy.resetNormalCastsSinceSummon();
             else enemy.recordNormalCast();
+            if (skill.phaseTwoOnly()) enemy.consumePhaseSkill();
         }
         enemy.setFacingFromVector(dx, dy);
         enemy.playAnimation(skill.actionBase() + "_windup", skill.windup(), false);
@@ -1992,7 +2086,7 @@ public final class EnemySystem {
             // 飞行弹体才受墙阻挡；地裂、斩击、钟波等短暂地面判定不能因为效果范围比敌人碰撞半径大
             // 就在生成当帧被导航系统提前清除。会反弹的弹体撞墙时按法线折返，而不是消失。
             if (attack.isMoving() && !advanceOrBounce(attack, oldX, oldY, dt, navigation)) attack.expire();
-            if (!attack.isExpired() && attack.getDamage() > 0.0 && attack.getWorld() == player.getCurrentWorld()
+            if (!attack.isExpired() && attack.getDamage() > 0.0
                     && CollisionUtil.circleIntersectsCircle(attack.getX(), attack.getY(), attack.getRadius(),
                     player.getX(), player.getY(), GameConfig.PLAYER_RADIUS)) {
                 // 伤害跟着这一招自己的数值走：傀儡的践踏与灯魇的小弹不再打掉同样多的血。
@@ -2143,25 +2237,18 @@ public final class EnemySystem {
         };
     }
 
-    /** 切界时不能留下看不见的旧世界伤害；离开当前世界的敌人清空索敌状态，回到该世界时重新索敌。 */
+    /** 切界保留共享战场中的索敌、施法和攻击。 */
     public void onWorldChanged(WorldType currentWorld) {
-        attacks.removeIf(attack -> attack.getWorld() != currentWorld);
-        visualEffects.removeIf(effect -> effect.world() != currentWorld);
-        telegraphs.removeIf(telegraph -> telegraph.world() != currentWorld);
-        rootWalls.removeIf(wall -> wall.world() != currentWorld);
-        pendingWalls.removeIf(pending -> pending.world() != currentWorld);
-        // 旧世界的多段标识一并作废：切回来时这些攻击不会复活，留着标识只会挡住新一轮的第一段。
-        consumedHitIds.clear();
-        activeCasts.entrySet().removeIf(entry -> entry.getKey().getWorld() != currentWorld);
-        for (Enemy enemy : enemies) if (enemy.getWorld() != currentWorld) enemy.loseAwareness();
-        if (navigation != null) syncTemporaryWalls(navigation);
+        // 敌人的索敌、施法、弹幕与命中去重均连续保留，切界不能免费清场。
     }
 
     public void spawnEventEnemies(Room room, long seed, Player player, RoomNavigationSystem navigation) {
+        resetWaves();
         Random random = new Random(seed ^ room.id() * 0x51ED270BL);
         enemies.clear(); attacks.clear(); visualEffects.clear(); summonRifts.clear();
         telegraphs.clear(); rootWalls.clear(); pendingWalls.clear(); consumedHitIds.clear();
         activeCasts.clear(); activeRoomId = room.id();
+        // 事件伏击仍是轻量的单段遭遇，不跟随战斗房波次扩容。
         int count = 2 + random.nextInt(2);
         for (int i = 0; i < count; i++) {
             EnemyKind kind = i == 0 ? EnemyKind.WOLF : EnemyKind.LANTERN;
@@ -2169,7 +2256,7 @@ public final class EnemySystem {
         }
     }
 
-    public boolean isRoomCleared() { return enemies.isEmpty(); }
+    public boolean isRoomCleared() { return enemies.isEmpty() && currentWave >= totalWaves; }
     public int getCount(WorldType world) { return (int) enemies.stream().filter(enemy -> enemy.getWorld() == world).count(); }
     public int consumeKills() { int result = killsSinceLastRead; killsSinceLastRead = 0; return result; }
 
@@ -2215,7 +2302,7 @@ public final class EnemySystem {
     /**
      * 当前生效的索敌半径（像素）。
      *
-     * <p>整房索敌开启时取「房间外接矩形对角线」，因此同界敌人只要与玩家同处一房就一定会参战，
+     * <p>整房索敌开启时取「房间外接矩形对角线」，因此敌人只要与玩家同处一房就一定会参战，
      * 不再出现站得远就完全不动的情况；关闭时使用保守的固定半径。
      */
     public static double detectionRange() {

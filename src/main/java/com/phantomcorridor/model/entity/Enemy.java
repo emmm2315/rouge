@@ -4,7 +4,7 @@ import com.phantomcorridor.config.GameConfig;
 import com.phantomcorridor.model.Difficulty;
 import com.phantomcorridor.model.WorldType;
 
-/** 纯运行时敌人模型。非当前世界的敌人存在但不会更新 AI 或造成碰撞。 */
+/** 纯运行时敌人模型。两界共享同一实体，世界属性仅用于招式、素材与地形碰撞。 */
 public final class Enemy {
     private final EnemyKind kind;
     private WorldType world;
@@ -17,6 +17,9 @@ public final class Enemy {
     private int hp;
     private boolean aware;
     private double alertRemaining;
+    private double spawnGrace;
+    public void beginSpawnGrace() { spawnGrace = GameConfig.ENEMY_SPAWN_GRACE; }
+    public boolean isSpawning() { return spawnGrace > 0.0; }
     private double attackCooldown;
     private double blinkCooldown;
     /** 首领召唤：距离下一次增援召唤还有多久（秒），开场置为 {@link GameConfig#WATCHER_SUMMON_OPENING_DELAY}。 */
@@ -27,6 +30,8 @@ public final class Enemy {
     private int summonStage;
     /** 首领自上次召唤后已经完整起手的普通技能数，防止召唤机制吞掉原有出招轮换。 */
     private int normalCastsSinceSummon;
+    private boolean phaseTwo;
+    private boolean phaseSkillPending;
     /** 是否为首领召唤出来的造物（首领倒下或离开该界时随之溃散）。 */
     private final boolean summoned;
     private int avoidanceSide;
@@ -37,6 +42,21 @@ public final class Enemy {
     private double progressAnchorX;
     private double progressAnchorY;
     private int lastMeleeHitId = -1;
+    private int scorchStacks;
+    private double scorchRemaining;
+
+    public int getScorchStacks() { return scorchStacks; }
+    public void addScorch() {
+        if (isDead()) return;
+        scorchStacks = Math.min(GameConfig.SCORCH_MAX_STACKS, scorchStacks + 1);
+        scorchRemaining = GameConfig.SCORCH_DURATION;
+    }
+    public int consumeScorch() {
+        int stacks = scorchStacks;
+        scorchStacks = 0;
+        scorchRemaining = 0;
+        return stacks;
+    }
     /** 素材包中的 body 动作目录名，例如 move、attack_windup、shield_bash_release。 */
     private String animationAction = "idle";
     /** front / back / right / left。左向优先使用已导出的镜像帧，不再二次镜像。 */
@@ -102,6 +122,10 @@ public final class Enemy {
         this.summonPressure = 0.0;
     }
     public boolean isBoss() { return boss; }
+    public boolean isPhaseTwo() { return phaseTwo; }
+    public boolean isPhaseSkillPending() { return phaseSkillPending; }
+    public void enterPhaseTwo() { phaseTwo = true; phaseSkillPending = true; }
+    public void consumePhaseSkill() { phaseSkillPending = false; }
     public double getX() { return x; }
     public double getY() { return y; }
     public void setPosition(double x, double y) { this.x = x; this.y = y; }
@@ -194,6 +218,9 @@ public final class Enemy {
     public void resetNormalCastsSinceSummon() { normalCastsSinceSummon = 0; }
 
     public void updateTimers(double dt) {
+        spawnGrace = Math.max(0.0, spawnGrace - Math.max(0.0, dt));
+        scorchRemaining = Math.max(0.0, scorchRemaining - Math.max(0.0, dt));
+        if (scorchRemaining == 0.0) scorchStacks = 0;
         alertRemaining = Math.max(0.0, alertRemaining - dt);
         attackCooldown = Math.max(0.0, attackCooldown - dt);
         blinkCooldown = Math.max(0.0, blinkCooldown - dt);

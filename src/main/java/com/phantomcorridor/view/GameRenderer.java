@@ -50,6 +50,77 @@ import javafx.scene.text.TextAlignment;
 
 /** Canvas 游戏画面渲染器。只读取模型，不修改游戏状态。 */
 public final class GameRenderer {
+    private List<RoomArea> outlinedAreas = List.of();
+    private java.awt.geom.Area roomOutline = new java.awt.geom.Area();
+    private Image lightFloorTexture;
+    private Image shadowFloorTexture;
+
+    /** 固定种子的无缝石砖贴图，仅首次使用时生成，避免逐帧绘制材质细节。 */
+    private Image floorTexture(boolean light) {
+        Image cached = light ? lightFloorTexture : shadowFloorTexture;
+        if (cached != null) return cached;
+        int size = 384;
+        var canvas = new javafx.scene.canvas.Canvas(size, size);
+        GraphicsContext g = canvas.getGraphicsContext2D();
+        Color stone = Color.web(light ? "#36332d" : "#2c2938");
+        g.setFill(Color.web(light ? "#24231f" : "#1d1b26"));
+        g.fillRect(0, 0, size, size);
+        for (int row = 0; row < 6; row++) {
+            for (int col = -1; col < 4; col++) {
+                // 周期边缘使用同一块砖的数据，跨贴图边界时色差与纹理保持连续。
+                var random = new java.util.Random(7919L * row + 104729L * Math.floorMod(col, 4) + 37);
+                double x = col * 96 + (row % 2) * 48 + 1;
+                double y = row * 64 + 1;
+                Color base = stone.deriveColor(0, 0.92, 0.91 + random.nextDouble() * 0.18, 1);
+                g.setFill(new LinearGradient(0, 0, 0.3, 1, true, CycleMethod.NO_CYCLE,
+                        new Stop(0, base.interpolate(Color.WHITE, 0.025)),
+                        new Stop(1, base.interpolate(Color.BLACK, 0.09))));
+                g.fillRoundRect(x, y, 94, 62, 3, 3);
+                g.setLineWidth(1);
+                g.setStroke(Color.rgb(207, 199, 184, 0.055));
+                g.strokeLine(x + 3, y + 1.5, x + 90, y + 1.5);
+                g.strokeLine(x + 1.5, y + 3, x + 1.5, y + 58);
+                g.setStroke(Color.rgb(0, 0, 0, 0.16));
+                g.strokeLine(x + 3, y + 60.5, x + 91, y + 60.5);
+                for (int grain = 0; grain < 65; grain++) {
+                    g.setFill(grain % 3 == 0 ? Color.rgb(222, 212, 198, 0.035)
+                            : Color.rgb(0, 0, 0, 0.055));
+                    g.fillRect(x + 4 + random.nextInt(85), y + 4 + random.nextInt(53),
+                            1 + random.nextInt(3), 1);
+                }
+                if (random.nextDouble() < 0.28) {
+                    double crackX = x + 18 + random.nextInt(48);
+                    double crackY = y + 12 + random.nextInt(26);
+                    g.setStroke(Color.rgb(0, 0, 0, 0.16));
+                    g.beginPath();
+                    g.moveTo(crackX, crackY);
+                    g.lineTo(crackX + 7, crackY + 4);
+                    g.lineTo(crackX + 11, crackY + 3);
+                    g.lineTo(crackX + 18, crackY + 9);
+                    g.stroke();
+                }
+            }
+        }
+        Image texture = canvas.snapshot(null, null);
+        if (light) lightFloorTexture = texture;
+        else shadowFloorTexture = texture;
+        return texture;
+    }
+
+    private void roomPath(GraphicsContext g) {
+        g.beginPath();
+        double[] point = new double[6];
+        var iterator = roomOutline.getPathIterator(null);
+        while (!iterator.isDone()) {
+            switch (iterator.currentSegment(point)) {
+                case java.awt.geom.PathIterator.SEG_MOVETO -> g.moveTo(point[0], point[1]);
+                case java.awt.geom.PathIterator.SEG_LINETO -> g.lineTo(point[0], point[1]);
+                case java.awt.geom.PathIterator.SEG_CLOSE -> g.closePath();
+                default -> throw new IllegalStateException("Room outline must be rectilinear");
+            }
+            iterator.next();
+        }
+    }
 
     /** 小地图：面板边长与每格房间的像素间距（间距要够大，房间之间才看得出连接关系）。 */
     // 原 280px 面板在战斗外也会过度抢占画面；缩至约 2/3，仍能保留中心跟随与裁剪效果。
@@ -249,9 +320,8 @@ public final class GameRenderer {
      */
     private void drawSummonRifts(GraphicsContext g, GameSession session, WorldType currentWorld) {
         for (SummonRift rift : session.getSummonRifts()) {
-            if (rift.world() != currentWorld) continue;
             double progress = rift.progress();
-            String form = currentWorld == WorldType.LIGHT ? "light" : "shadow";
+            String form = rift.world() == WorldType.LIGHT ? "light" : "shadow";
             double size = 150.0 + 60.0 * progress;
             Image telegraph = animationFrame(telegraphFrames(form, "spawn_circle"),
                     rift.age(), rift.duration(), false, 4.0);
@@ -265,7 +335,7 @@ public final class GameRenderer {
                     0.0, 120.0 + 110.0 * progress, rift.age(), rift.duration());
             // 预警素材那 4 帧只是把 r=100/128 的圈逐渐点亮、加粗，本身不会收缩；
             // 这里再补一道从预警圈收拢到孔隙的环，让“还要多久出怪”一眼可见。
-            Color ring = currentWorld == WorldType.LIGHT ? LIGHT_GOLD : SHADOW_VIOLET;
+            Color ring = rift.world() == WorldType.LIGHT ? LIGHT_GOLD : SHADOW_VIOLET;
             double warningRadius = size * 0.39;
             double radius = warningRadius * (1.0 - progress) + 26.0;
             g.setStroke(Color.color(ring.getRed(), ring.getGreen(), ring.getBlue(), 0.35 + 0.5 * progress));
@@ -300,9 +370,11 @@ public final class GameRenderer {
     /** 非当前世界的敌人及攻击完全不绘制，与模型的同界碰撞规则保持一致。 */
     private void drawEnemies(GraphicsContext g, GameSession session, WorldType currentWorld) {
         List<Enemy> visible = session.getEnemies().getEnemies().stream()
-                .filter(enemy -> enemy.getWorld() == currentWorld).sorted(Comparator.comparingDouble(Enemy::getY)).toList();
+                .sorted(Comparator.comparingDouble(Enemy::getY)).toList();
         for (Enemy enemy : visible) {
-            Image[] frames = enemyFrames(enemy, currentWorld == WorldType.LIGHT ? "light" : "shadow");
+            g.save();
+            g.setGlobalAlpha(1.0);
+            Image[] frames = enemyFrames(enemy, enemy.getWorld() == WorldType.LIGHT ? "light" : "shadow");
             Image body = animationFrame(frames, enemy.getAnimationTime(), enemy.getAnimationDuration(), enemy.isAnimationLooping(), 6.0);
             double size = displayWidth(enemy.getKind());
             double x = Math.rint(enemy.getX() - size / 2.0);
@@ -315,7 +387,16 @@ public final class GameRenderer {
                 g.setFill(enemy.getWorld() == WorldType.LIGHT ? LIGHT_GOLD : SHADOW_VIOLET);
                 g.fillRect(x, enemy.getY() - size / 2.0, size, size);
             }
-            drawEnemyHealth(g, enemy, currentWorld == WorldType.LIGHT ? LIGHT_GOLD : SHADOW_VIOLET);
+            drawEnemyHealth(g, enemy, enemy.getWorld() == WorldType.LIGHT ? LIGHT_GOLD : SHADOW_VIOLET);
+            g.restore();
+            g.setFill(Color.WHITE);
+            g.setFont(Font.font("Microsoft YaHei UI", 11));
+            g.fillText(enemy.isSpawning() ? "现身中" : enemy.getKind().affinity().label(), enemy.getX() - 24, enemy.getHitboxCenterY() - 50);
+            if (enemy.getScorchStacks() > 0) {
+                g.setFill(LIGHT_GOLD);
+                g.setFont(Font.font("Microsoft YaHei UI", 12));
+                g.fillText("灼痕 ×" + enemy.getScorchStacks(), enemy.getX() - 25, enemy.getHitboxCenterY() - 35);
+            }
         }
     }
 
@@ -362,9 +443,9 @@ public final class GameRenderer {
     private void drawEnemyTelegraphs(GraphicsContext g, GameSession session, WorldType currentWorld) {
         List<EnemyTelegraph> telegraphs = session.getEnemies().getTelegraphs();
         if (telegraphs.isEmpty()) return;
-        Color base = currentWorld == WorldType.LIGHT ? LIGHT_GOLD : SHADOW_VIOLET;
         for (EnemyTelegraph telegraph : telegraphs) {
-            if (telegraph.world() != currentWorld || !telegraph.isVisible()) continue;
+            Color base = telegraph.world() == WorldType.LIGHT ? LIGHT_GOLD : SHADOW_VIOLET;
+            if (!telegraph.isVisible()) continue;
             double progress = telegraph.progress();
             double alpha;
             if (telegraph.isTriggered()) {
@@ -529,11 +610,11 @@ public final class GameRenderer {
 
     private void drawEnemyAttacks(GraphicsContext g, GameSession session, WorldType currentWorld) {
         for (EnemyAttack attack : session.getEnemies().getAttacks()) {
-            if (attack.getWorld() != currentWorld || !attack.isActive()) continue;
+            if (!attack.isActive()) continue;
             // 飞行攻击的碰撞半径保持原数值；只扩大独立美术帧，避免“看不见的小弹”
             // 与实际判定不一致。不同弹种按轮廓复杂度给出不同的清晰显示尺寸。
             double size = attack.isMoving() ? projectileVisualSize(attack) : Math.max(74, attack.getRadius() * 3.5);
-            if (!drawMonsterEffect(g, attack.getSource(), currentWorld, attack.getEffectId(), attack.getX(), attack.getY(),
+            if (!drawMonsterEffect(g, attack.getSource(), attack.getWorld(), attack.getEffectId(), attack.getX(), attack.getY(),
                     attack.getAngleRadians(), size, 0.20, .36)) {
                 g.setFill(currentWorld == WorldType.LIGHT ? Color.web("#fff0a2") : Color.web("#d59aff"));
                 g.fillOval(attack.getX() - attack.getRadius(), attack.getY() - attack.getRadius(),
@@ -541,7 +622,6 @@ public final class GameRenderer {
             }
         }
         for (EnemyVisualEffect effect : session.getEnemies().getVisualEffects()) {
-            if (effect.world() != currentWorld) continue;
             if (effect.isBodyAnimation()) drawMonsterBodyEffect(g, effect);
             else drawMonsterEffect(g, effect.source(), effect.world(), effect.effectId(),
                     effect.x(), effect.y(), effect.angleRadians(), effect.size(), effect.age(), effect.duration());
@@ -1480,24 +1560,40 @@ public final class GameRenderer {
 
     private void drawRoom(GraphicsContext g, GameSession session, boolean light) {
         Room room = session.getNavigation().getCurrentRoom();
-        Color floor = light ? Color.web("#332d25") : Color.web("#231a31");
-        Color tile = light ? Color.web("#3e372c") : Color.web("#2d213e");
         Color border = light ? Color.web("#c09145") : Color.web("#7a4eb0");
-        for (RoomArea area : room.areas()) {
-            g.setFill(floor);
-            g.fillRect(area.x(), area.y(), area.width(), area.height());
-            g.setFill(tile);
-            for (double y = area.y(); y < area.y() + area.height(); y += 32) {
-                for (double x = area.x() + (((int) ((y - area.y()) / 32)) % 2) * 16;
-                     x < area.x() + area.width(); x += 32) g.fillRect(x, y, 16, 16);
+        if (!outlinedAreas.equals(room.areas())) {
+            outlinedAreas = List.copyOf(room.areas());
+            roomOutline = new java.awt.geom.Area();
+            for (RoomArea area : outlinedAreas) {
+                roomOutline.add(new java.awt.geom.Area(new java.awt.geom.Rectangle2D.Double(
+                        area.x(), area.y(), area.width(), area.height())));
             }
-            g.setStroke(Color.rgb(0, 0, 0, 0.72));
-            g.setLineWidth(14);
-            g.strokeRect(area.x(), area.y(), area.width(), area.height());
-            g.setStroke(border);
-            g.setLineWidth(4);
-            g.strokeRect(area.x(), area.y(), area.width(), area.height());
         }
+        g.save();
+        roomPath(g);
+        g.clip();
+        // 世界坐标锚定的铺装，不随组成房间的矩形重新起排。
+        g.setFill(new javafx.scene.paint.ImagePattern(floorTexture(light), 0, 0, 384, 384, false));
+        g.fillRect(room.minX(), room.minY(), room.maxX() - room.minX(), room.maxY() - room.minY());
+        // 柔和的中央照明与沿真实外墙的积灰阴影，为地面增加深度。
+        g.setFill(new RadialGradient(0, 0, 0.5, 0.45, 0.7, true, CycleMethod.NO_CYCLE,
+                new Stop(0, light ? Color.rgb(220, 185, 119, 0.045) : Color.rgb(151, 125, 210, 0.045)),
+                new Stop(0.55, Color.TRANSPARENT), new Stop(1, Color.rgb(0, 0, 0, 0.20))));
+        g.fillRect(room.minX(), room.minY(), room.maxX() - room.minX(), room.maxY() - room.minY());
+        roomPath(g);
+        for (int width = 48; width >= 16; width -= 16) {
+            g.setStroke(Color.rgb(0, 0, 0, 0.065));
+            g.setLineWidth(width);
+            g.stroke();
+        }
+        g.restore();
+        roomPath(g);
+        g.setStroke(Color.rgb(0, 0, 0, 0.72));
+        g.setLineWidth(14);
+        g.stroke();
+        g.setStroke(border);
+        g.setLineWidth(4);
+        g.stroke();
 
         for (Direction direction : Direction.values()) {
             if (room.hasDoor(direction)) {
@@ -1543,7 +1639,9 @@ public final class GameRenderer {
     }
 
     private void drawMiniMap(GraphicsContext g, GameSession session, boolean light) {
-        if (session.getLightEnemyCount() + session.getShadowEnemyCount() > 0) return;
+        // 波次之间敌人列表会暂时为空，但房间仍处于战斗状态；
+        // 必须等全部波次完成后才恢复小地图，否则玩家会误以为可以离开。
+        if (!session.getEnemies().isRoomCleared()) return;
         Room current = session.getNavigation().getCurrentRoom();
         double panelSize = MINI_MAP_PANEL_SIZE;
         double panelX = MINI_MAP_X;
@@ -1698,12 +1796,47 @@ public final class GameRenderer {
 
     private void drawPhaseWall(GraphicsContext g, double x, double y, double width, double height,
                                Color color, double alpha) {
-        g.setFill(Color.color(color.getRed(), color.getGreen(), color.getBlue(), alpha * 0.66));
-        g.fillRect(x, y, width, height);
-        g.setFill(Color.color(0.05, 0.04, 0.08, alpha));
-        for (double py = y + 4; py < y + height; py += 16) {
-            for (double px = x + 4; px < x + width; px += 16) g.fillRect(px, py, 7, 7);
+        g.save();
+        g.setGlobalAlpha(g.getGlobalAlpha() * alpha);
+        double bevel = 5;
+        double[] xs = {x + bevel, x + width - bevel, x + width, x + width,
+                x + width - bevel, x + bevel, x, x};
+        double[] ys = {y, y, y + bevel, y + height - bevel,
+                y + height, y + height, y + height - bevel, y + bevel};
+        g.setFill(Color.rgb(0, 0, 0, 0.35));
+        g.fillRoundRect(x + 3, y + 5, width, height, 8, 8);
+        g.setFill(new LinearGradient(0, 0, 0.7, 1, true, CycleMethod.NO_CYCLE,
+                new Stop(0, color.interpolate(Color.web("#45414a"), 0.65)),
+                new Stop(1, Color.web("#201d29"))));
+        g.fillPolygon(xs, ys, 8);
+        g.setStroke(Color.web("#13111b"));
+        g.setLineWidth(2);
+        g.strokePolygon(xs, ys, 8);
+        g.setStroke(color.interpolate(Color.WHITE, 0.2));
+        g.setLineWidth(1);
+        g.strokeLine(x + bevel, y + 2, x + width - bevel, y + 2);
+        g.strokeLine(x + 2, y + bevel, x + 2, y + height - bevel);
+        g.setFill(Color.rgb(8, 7, 14, 0.45));
+        g.fillRect(x + 5, y + height - 7, width - 10, 4);
+        // 长墙使用错开的石缝；中心镶嵌符文让短柱也有明确的视觉重心。
+        g.setStroke(Color.rgb(8, 7, 14, 0.55));
+        if (width > height * 1.5) {
+            for (double px = x + 28; px < x + width - 12; px += 32)
+                g.strokeLine(px, y + 5, px - 3, y + height - 9);
+        } else if (height > width * 1.5) {
+            for (double py = y + 28; py < y + height - 12; py += 32)
+                g.strokeLine(x + 5, py, x + width - 5, py - 2);
         }
+        double cx = x + width / 2, cy = y + height / 2 - 1;
+        g.setFill(Color.web("#17141f"));
+        g.fillPolygon(new double[]{cx, cx + 8, cx, cx - 8},
+                new double[]{cy - 9, cy, cy + 9, cy}, 4);
+        g.setStroke(color);
+        g.strokePolygon(new double[]{cx, cx + 5, cx, cx - 5},
+                new double[]{cy - 6, cy, cy + 6, cy}, 4);
+        g.setFill(color.interpolate(Color.WHITE, 0.35));
+        g.fillRect(cx - 1, cy - 2, 2, 4);
+        g.restore();
     }
 
     private void drawPlayer(GraphicsContext g, Player player, boolean light) {
@@ -1966,7 +2099,7 @@ public final class GameRenderer {
         }
 
         g.setFill(Color.web("#fdf6e9"));
-        g.fillText("相位", HUD_X + 14, HUD_Y + 66);
+        g.fillText(player.isShiftSlowed() ? "减速" : player.getPhaseEnergy() >= GameConfig.PHASE_ENERGY_MAX ? "强化" : "切界", HUD_X + 14, HUD_Y + 66);
         double phaseY = HUD_Y + 54;
         g.setFill(Color.rgb(255, 255, 255, 0.12));
         g.fillRoundRect(HUD_VALUE_X, phaseY, HUD_VALUE_WIDTH, 14, 7, 7);
@@ -1983,7 +2116,10 @@ public final class GameRenderer {
         // 盾量取整：护盾是临时生命值，小数（12.3）在这里只会占位置、读不出额外信息。
         g.setFill(Color.web("#e8dff2"));
         g.setFont(Font.font("Microsoft YaHei UI", 11));
-        g.fillText("光残敌 " + session.getLightEnemyCount() + "　影残敌 " + session.getShadowEnemyCount()
+        g.fillText((session.getEnemies().getTotalWaves() > 0
+                ? "波次 " + session.getEnemies().getCurrentWave() + "/" + session.getEnemies().getTotalWaves()
+                    + (session.getEnemies().isBetweenWaves() ? " 待刷新" : " 剩余 " + session.getEnemies().getEnemies().size())
+                : "敌人 " + session.getEnemies().getEnemies().size())
                 + "　金币 " + session.getCoins()
                 + "　盾 " + Math.round(player.getShield()) + "/" + Math.round(player.getMaxShield()),
                 HUD_X + 14, HUD_Y + 86);
@@ -2025,7 +2161,8 @@ public final class GameRenderer {
         g.setTextAlign(TextAlignment.CENTER);
         g.setFill(Color.web("#fdf6e9"));
         g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 15));
-        g.fillText(boss.getKind().displayName() + (light ? "　·　光形态" : "　·　影形态"), x + width / 2.0, y + 2);
+        g.fillText(boss.getKind().displayName() + (light ? "　·　光形态" : "　·　影形态")
+                + (boss.isPhaseTwo() ? "　·　二阶段" : ""), x + width / 2.0, y + 2);
         g.setTextAlign(TextAlignment.LEFT);
         g.setFill(Color.rgb(255, 255, 255, 0.14));
         g.fillRoundRect(x, y + 8, width, 8, 4, 4);

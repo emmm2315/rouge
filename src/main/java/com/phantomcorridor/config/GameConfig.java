@@ -111,14 +111,18 @@ public final class GameConfig {
 
     // ---- 第 6 天：敌人与房间战斗 ----
     /** 普通战斗房的敌人数量（含可能替换其中一只的精英）。 */
-    public static final int BATTLE_ENEMY_MIN = 5;
-    public static final int BATTLE_ENEMY_MAX = 7;
+    public static final int BATTLE_WAVE_MAX = 3;
+    public static final double BATTLE_WAVE_INTERVAL = 1.2;
+    public static final double ENEMY_SPAWN_SAFE_DISTANCE = 260.0;
+    public static final double ENEMY_SPAWN_GRACE = 0.8;
+    public static final int BATTLE_ENEMY_MIN = 3;
+    public static final int BATTLE_ENEMY_MAX = 4;
 
-    /** 每往下一层，战斗房多刷几只怪：第 N 层 = 基础数量 + (N-1) × 该值。 */
-    public static final int BATTLE_ENEMY_PER_FLOOR = 1;
+    /** 每层额外同屏数量保持为零，难度通过属性和精英概率成长。 */
+    public static final int BATTLE_ENEMY_PER_FLOOR = 0;
 
-    /** 单间战斗房的敌人数量硬上限：再多就会把房间挤成一团、也打不动。 */
-    public static final int BATTLE_ENEMY_MAX_CAP = 12;
+    /** 单波战斗的敌人数量硬上限：再多就会把房间挤成一团、也打不动。 */
+    public static final int BATTLE_ENEMY_MAX_CAP = 5;
 
     /** 精英替换普通怪的起始层数：第 1 层只出普通怪，让玩家先认熟基础招式。 */
     public static final int BATTLE_ELITE_MIN_FLOOR = 2;
@@ -129,7 +133,7 @@ public final class GameConfig {
     public static final double BATTLE_ELITE_CHANCE_CAP = 0.60;
 
     /**
-     * 战斗房在第 N 层应当刷多少只怪（已封顶）。
+     * 战斗房每波应当刷多少只怪（已封顶）。
      *
      * @param floor 层数（从 1 开始）
      * @param extra 随机附加值（{@code 0 .. BATTLE_ENEMY_MAX - BATTLE_ENEMY_MIN}）
@@ -498,7 +502,14 @@ public final class GameConfig {
     public static final double PHASE_ENERGY_PER_FRAGMENT = 25.0;
 
     /** 切换世界后的冷却时间（秒，占位；§3.3"切换后进入冷却恢复期"） */
-    public static final double WORLD_SWITCH_COOLDOWN = 0.6;
+    public static final double WORLD_SWITCH_COOLDOWN = 0.3;
+    public static final double BASIC_SHIFT_SLOW_TIME = 0.3;
+    public static final double BASIC_SHIFT_SPEED = 0.65;
+    public static final double EMPOWERED_SHIFT_INVULNERABILITY = 0.3;
+    public static final double SCORCH_DURATION = 6.0;
+    public static final int SCORCH_MAX_STACKS = 3;
+    public static final double SCORCH_DAMAGE_PER_STACK = 0.4;
+    public static final double SCORCH_ENERGY_PER_STACK = 8.0;
 
     /** 切界脉冲清除玩家周围敌方弹幕的半径。 */
     public static final double PHASE_PULSE_RADIUS = 118.0;

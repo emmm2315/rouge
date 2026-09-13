@@ -301,7 +301,31 @@ public enum EnemySkill {
     /** 逆砂遁形：起终点镜门外额外留下两幅假影；假影不攻击、不挡路。 */
     HOURGLASS_SHADOW_GATE(spec(EnemyKind.HOURGLASS, WorldType.SHADOW, "skill3", "rift_portal", Pattern.TELEPORT)
             .timing(.90, .20, 1.10).cooldown(6.0).range(600).teleport(180, 360).illusions(2).crossWalls()
-            .damage(0.0).hitPolicy(HitPolicy.NONE).telegraph("spawn"));
+            .damage(0.0).hitPolicy(HitPolicy.NONE).telegraph("spawn")),
+
+    // ================= v2 Boss · 二阶段招牌技 =================
+    /** 炮蟹过载棱阵：换形后首轮额外补一圈低速炮弹，仍按每枚弹体独立结算。 */
+    CRAB_PHASE_OVERLOAD(spec(EnemyKind.PRISM_CRAB, WorldType.SHADOW, "skill3", "prism_shell", Pattern.BARRAGE)
+            .timing(.95, 1.10, 1.35).cooldown(9.0).range(620).radius(18).count(6).ring()
+            .volleys(2, .55).angleStep(30).speed(220).damage(4.5).phaseTwoOnly().telegraph("ring_gap")),
+    /** 螳爵追命折步：二阶段首次出招必走折线突刺，迫使玩家横向换位。 */
+    MANTIS_PHASE_HUNT(spec(EnemyKind.MANTIS, WorldType.SHADOW, "skill2", "dash_trail", Pattern.CHARGE)
+            .timing(.90, .35, 1.55).cooldown(8.5).range(340).distance(230).sideStep(85).width(70)
+            .damage(11.0).stopOnWall().phaseTwoOnly().telegraph("bent_line")),
+    /** 蛛后封巢：二阶段首次施法把两条交错夜网压到更近位置，配合原有召唤但不改召唤上限。 */
+    WEAVER_PHASE_NEST(spec(EnemyKind.WEAVER, WorldType.SHADOW, "skill3", "web_field", Pattern.BAND)
+            .timing(1.05, .95, 1.55).cooldown(9.0).range(430).distance(160).bandLength(360).width(68)
+            .safeGap(130).segments(2).offsets(0, .72).hitPolicy(HitPolicy.ONCE_PER_BAND)
+            .damage(6.0).phaseTwoOnly().telegraph("cross_gap")),
+    /** 古树枯庭：二阶段首次施法换一组更短的根篱，制造可读的安全通道而非封死房间。 */
+    ROOTKING_PHASE_GARDEN(spec(EnemyKind.ROOTKING, WorldType.SHADOW, "skill2", "root_wall", Pattern.WALL)
+            .timing(1.15, .20, 1.45).cooldown(10.0).range(420).distance(210).wallDuration(3.5)
+            .safeGap(170).damage(0.0).hitPolicy(HitPolicy.NONE).phaseTwoOnly().telegraph("broken_line")),
+    /** 术士逆时回响：二阶段首次施法留下两枚真圈与一枚假圈，并额外生成本体幻影。 */
+    HOURGLASS_PHASE_ECHO(spec(EnemyKind.HOURGLASS, WorldType.SHADOW, "skill2", "echo_ripple", Pattern.MULTI_MARK)
+            .timing(1.15, .95, 1.55).cooldown(9.0).range(580).radius(72).marks(3, 2).spacing(165)
+            .offsets(0, .65).illusions(2).hitPolicy(HitPolicy.ONCE_PER_MARK).damage(10.5)
+            .phaseTwoOnly().telegraph("triple_circle"));
 
     /** 出招图案：决定释放阶段生成什么样的攻击实体。 */    public enum Pattern {
         PROJECTILE, SPREAD, FAN, RING, DOUBLE_RING, ARC, DOUBLE_ARC, DASH, DASH_NO_DAMAGE, CRACK,
@@ -380,6 +404,7 @@ public enum EnemySkill {
     private final boolean stopOnWall, contactDamage, explodeOnImpact, crossWalls, pulseClearable;
     private final double guardReduction, guardAngleDegrees;
     private final String telegraph;
+    private final boolean phaseTwoOnly;
 
     private EnemySkill(Spec s) {
         this.kind = s.kind;
@@ -437,6 +462,7 @@ public enum EnemySkill {
         this.guardReduction = s.guardReduction;
         this.guardAngleDegrees = s.guardAngleDegrees;
         this.telegraph = s.telegraph;
+        this.phaseTwoOnly = s.phaseTwoOnly;
     }
 
     public EnemyKind kind() { return kind; }
@@ -497,6 +523,7 @@ public enum EnemySkill {
     public double guardReduction() { return guardReduction; }
     public double guardAngleDegrees() { return guardAngleDegrees; }
     public String telegraph() { return telegraph; }
+    public boolean phaseTwoOnly() { return phaseTwoOnly; }
 
     /** 是否是多段伤害：渲染层据此画分段预警，测试据此校验每段的命中标识。 */
     public boolean multiSegment() { return hitOffsets.length > 1; }
@@ -572,6 +599,7 @@ public enum EnemySkill {
         private boolean stopOnWall, contactDamage = true, explodeOnImpact, crossWalls, pulseClearable = true;
         private double guardReduction, guardAngleDegrees = 120;
         private String telegraph = "circle";
+        private boolean phaseTwoOnly;
 
         private Spec(EnemyKind kind, WorldType world, String actionBase, String effect, Pattern pattern) {
             this.kind = kind;
@@ -630,5 +658,6 @@ public enum EnemySkill {
             guardReduction = reduction; guardAngleDegrees = angleDegrees; return this;
         }
         private Spec telegraph(String value) { telegraph = value; return this; }
+        private Spec phaseTwoOnly() { phaseTwoOnly = true; return this; }
     }
 }
