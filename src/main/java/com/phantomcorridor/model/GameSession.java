@@ -8,6 +8,7 @@ import com.phantomcorridor.model.entity.EnemyKind;
 import com.phantomcorridor.model.entity.Player;
 import com.phantomcorridor.model.combat.PlayerAttackSystem;
 import com.phantomcorridor.model.combat.PlayerAbilitySystem;
+import com.phantomcorridor.model.combat.PlayerStanceSystem;
 import com.phantomcorridor.model.combat.EnemyProjectileSystem;
 import com.phantomcorridor.model.combat.EnemySystem;
 import com.phantomcorridor.model.combat.SummonRift;
@@ -17,13 +18,14 @@ import com.phantomcorridor.model.room.RoomNavigationSystem;
 import com.phantomcorridor.model.room.Room;
 import java.util.List;
 
-/** 一局游戏的聚合状态。后续房间、敌人、掉落都从这里接入。 */
+/** 一局游戏的聚合状态，协调移动、战斗、房间交互与结算。 */
 public final class GameSession {
 
     private final Player player = new Player(AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0);
     private final WorldShiftSystem worldShift = new WorldShiftSystem();
     private final PlayerAttackSystem attackSystem = new PlayerAttackSystem();
     private final PlayerAbilitySystem abilities = new PlayerAbilitySystem();
+    private final PlayerStanceSystem stance = new PlayerStanceSystem();
     private final EnemyProjectileSystem enemyProjectiles = new EnemyProjectileSystem();
     private final EnemySystem enemies = new EnemySystem();
     private final RoomNavigationSystem navigation = new RoomNavigationSystem();
@@ -46,18 +48,10 @@ public final class GameSession {
      * 两者混用会让结算界面的计时一直涨下去——这就是"穿越完成后用时不会停下"的根因。
      */
     private double runTime;
-    /** 右键按住状态：光形态=蓄力中，影形态=刚按下时开启格挡窗口。 */
-    private boolean secondaryHeld;
-    private boolean secondaryWasHeld;
-    /** 左键上一帧的按住状态：蓄力中按左键也要发射，所以要检测按下边沿。 */
-    private boolean attackWasHeld;
     private int totalKills;
     private String roomAnnouncement = "";
     private double roomAnnouncementRemaining;
     private boolean floorAnnouncement;
-    // 未被引用（IDE 的 Unused 检查会报）：只被赋值、从未被读取，也没有对外暴露 getter。
-    // 需要“是否在战斗中”时直接问 enemies.isRoomCleared() 即可，先注释保留。
-    // private boolean combatActive;
     private boolean interactRequested;
     private boolean dashRequested;
     /** 上一帧影斩的释放次数：用来在“这一刀刚落下”的那一帧触发夜行披风。 */
@@ -78,9 +72,6 @@ public final class GameSession {
         worldShift.reset();
         visualTime = 0;
         runTime = 0;
-        secondaryHeld = false;
-        secondaryWasHeld = false;
-        attackWasHeld = false;
         totalKills = 0;
         abilities.reset();
         runSeed = MapGenerator.parseSeed(configuredSeed);
@@ -88,7 +79,7 @@ public final class GameSession {
         player.setDifficulty(this.difficulty);
         floor = 1;
         runCleared = false;
-        dashRequested = false;
+        clearPendingInput();
         aimX = player.getX() + 1.0;
         aimY = player.getY();
         startFloor();
@@ -103,6 +94,7 @@ public final class GameSession {
     private void startFloor() {
         dungeonSeed = runSeed + (floor - 1) * GameConfig.FLOOR_SEED_STEP;
         attackSystem.reset();
+        lastMeleeReleaseCount = attackSystem.getMeleeReleaseCount();
         abilities.clearRoomEffects();
         player.cancelAbilityAnimation();
         enemyProjectiles.reset();
@@ -121,7 +113,6 @@ public final class GameSession {
         player.cancelCharge();
         player.clearBlock();
         phasePulseVisibleRemaining = 0.0;
-        // combatActive = false;   // 见字段处的说明：这个状态没有任何读取点
         roomAnnouncement = floorAnnouncement();
         roomAnnouncementRemaining = 2.6;
         floorAnnouncement = true;
@@ -160,7 +151,7 @@ public final class GameSession {
         aimX = targetX;
         aimY = targetY;
         // 形态右键机制在移动之前结算：蓄力会压低移速，必须当帧生效。
-        updateStance(attacking);
+        stance.update(player, attackSystem, attacking, aimX, aimY);
         navigation.setHiddenExitLocked(isInCombat());
         double movementStartX = player.getX();
         double movementStartY = player.getY();
@@ -183,20 +174,7 @@ public final class GameSession {
         if (!player.isDashing()) player.advanceWalkDistance(Math.min(Math.hypot(actualMovementX, actualMovementY),
                 player.movementSpeed() * Math.max(0, dt)));
         player.updateDash(dt);
-        if (navigation.consumeRoomChanged()) {
-            abilities.clearRoomEffects();
-            player.cancelAbilityAnimation();
-            attackSystem.clearTransientAttacks();
-            // 换房时形态右键机制一并清空：格挡窗口不该跨房间留着，强化也不该带到下一间。
-            player.cancelCharge();
-            player.clearBlock();
-            Room entered = navigation.getCurrentRoom();
-            roomContent.enterRoom(entered, player);
-            enemies.enterRoom(entered, dungeonSeed, player, navigation);
-            roomAnnouncement = roomAnnouncement(entered);
-            roomAnnouncementRemaining = 2.2;
-            floorAnnouncement = false;
-        }
+        if (navigation.consumeRoomChanged()) enterCurrentRoom();
         // 房间内容只在第一次进入时生成，进出不会重刷；这里只维护“待确认商品”的有效性。
         roomContent.update(navigation.getCurrentRoom(), player);
         attackSystem.update(dt, navigation);
@@ -208,29 +186,8 @@ public final class GameSession {
         abilities.update(dt, player, enemies, navigation);
         enemies.update(dt, player, attackSystem, navigation);
         applyHitKnockback();
-        if (enemies.consumePhaseTransitions() > 0) {
-            EnemyKind transformed = getBossKind();
-            roomAnnouncement = (transformed == null ? "首领" : transformed.displayName()) + " · 二阶段"
-                    + " · 招牌机制启动";
-            roomAnnouncementRemaining = 2.0;
-        }
-        // 首领起手召唤时给一条即时提示：裂隙本身画在地上，但玩家常常正盯着首领看。
-        if (enemies.consumeSummonCalls() > 0) {
-            EnemyKind summoner = getBossKind();
-            roomAnnouncement = (summoner == null ? "首领" : summoner.displayName()) + "撕开裂隙 · 召唤增援";
-            roomAnnouncementRemaining = 2.0;
-        }
-        int kills = enemies.consumeKills();
-        if (kills > 0) totalKills += kills;
-        int phaseReward = enemies.consumePhaseEnergyReward();
         Room current = navigation.getCurrentRoom();
-        if (current.type() == RoomType.BATTLE || current.type() == RoomType.BOSS
-                || current.type() == RoomType.EVENT) {
-            current.setCleared(enemies.isRoomCleared());
-        }
-        if (phaseReward > 0) player.restorePhaseEnergy(phaseReward);
-        if (kills > 0) player.addCoins(kills + Math.floorMod((int) (dungeonSeed + kills * 13L), kills * 3 + 1));
-        // combatActive = !enemies.isRoomCleared();   // 同上：这个状态没有任何读取点
+        settleCombat(current);
         if (interactRequested) {
             interactRequested = false;
             interact(current);
@@ -246,6 +203,56 @@ public final class GameSession {
                 phasePulseVisibleRemaining > 0.0);
     }
 
+    /** 丢弃尚未消费的操作，供重开、暂停和失焦时使用。 */
+    public void clearPendingInput() {
+        interactRequested = false;
+        dashRequested = false;
+        stance.reset();
+        player.cancelCharge();
+        player.endBlockWindow();
+    }
+
+    /** 换房清理只影响瞬时战斗状态，保留资源和技能冷却。 */
+    private void enterCurrentRoom() {
+        abilities.clearRoomEffects();
+        player.cancelAbilityAnimation();
+        attackSystem.clearTransientAttacks();
+        // 换房时形态右键机制一并清空：格挡窗口不该跨房间留着，强化也不该带到下一间。
+        player.cancelCharge();
+        player.clearBlock();
+        Room entered = navigation.getCurrentRoom();
+        roomContent.enterRoom(entered, player);
+        enemies.enterRoom(entered, dungeonSeed, player, navigation);
+        roomAnnouncement = roomAnnouncement(entered);
+        roomAnnouncementRemaining = 2.2;
+        floorAnnouncement = false;
+    }
+
+    /** 消费战斗事件一次，并将击杀奖励和清房状态同步到本局。 */
+    private void settleCombat(Room current) {
+        if (enemies.consumePhaseTransitions() > 0) {
+            EnemyKind transformed = getBossKind();
+            roomAnnouncement = (transformed == null ? "首领" : transformed.displayName()) + " · 二阶段"
+                    + " · 招牌机制启动";
+            roomAnnouncementRemaining = 2.0;
+        }
+        // 首领起手召唤时给一条即时提示：裂隙本身画在地上，但玩家常常正盯着首领看。
+        if (enemies.consumeSummonCalls() > 0) {
+            EnemyKind summoner = getBossKind();
+            roomAnnouncement = (summoner == null ? "首领" : summoner.displayName()) + "撕开裂隙 · 召唤增援";
+            roomAnnouncementRemaining = 2.0;
+        }
+        int kills = enemies.consumeKills();
+        if (kills > 0) totalKills += kills;
+        int phaseReward = enemies.consumePhaseEnergyReward();
+        if (current.type() == RoomType.BATTLE || current.type() == RoomType.BOSS
+                || current.type() == RoomType.EVENT) {
+            current.setCleared(enemies.isRoomCleared());
+        }
+        if (phaseReward > 0) player.restorePhaseEnergy(phaseReward);
+        if (kills > 0) player.addCoins(kills + Math.floorMod((int) (dungeonSeed + kills * 13L), kills * 3 + 1));
+    }
+
     /**
      * 相位能量自然回复速率（点/秒）。
      *
@@ -259,60 +266,12 @@ public final class GameSession {
     }
 
     /**
-     * 推进形态右键机制：光形态蓄力、影形态格挡。
-     *
-     * <p>右键的语义按当前形态切换：
-     * <ul>
-     *   <li><b>光形态</b>：按住蓄力（伤害 1 → 5 倍线性增长、移速 ×0.5），
-     *       松开右键 / 蓄满 / 按下左键 三种时机都能把这一发打出去；</li>
-     *   <li><b>影形态</b>：按下即开启 1.5 秒的格挡窗口，窗口内完全免伤，
-     *       首次挡下伤害会攒下一次"强化暗影普攻"（×10）。</li>
-     * </ul>
-     *
-     * <p>按下/松开的边沿检测放在这里而不是输入层：控制器只该上报"右键是否按着"，
-     * "松开才发射"属于玩法规则，不属于输入转发。
-     */
-    private void updateStance(boolean attacking) {
-        boolean pressed = secondaryHeld && !secondaryWasHeld;
-        boolean released = !secondaryHeld && secondaryWasHeld;
-        secondaryWasHeld = secondaryHeld;
-        boolean attackPressed = attacking && !attackWasHeld;
-        attackWasHeld = attacking;
-
-        if (player.getCurrentWorld() != WorldType.LIGHT) {
-            // 影形态：一次按下开一次窗口，长按不会反复触发（窗口本身最长 1.5 秒）。
-            if (pressed) player.beginBlock();
-            return;
-        }
-        if (pressed) player.beginCharge();
-        if (!player.isCharging()) return;
-        // 蓄满自动发射：玩家不需要盯着进度条掐点松手，蓄满就是"已经准备好"。
-        if (released || player.isChargeFull() || attackPressed) fireChargedShot();
-    }
-
-    /** 把当前蓄力打出去；不足最短蓄力时间视为误触，直接放弃且不扣能量。 */
-    private void fireChargedShot() {
-        if (!player.isChargeFireable()) {
-            player.cancelCharge();
-            return;
-        }
-        // 是否蓄满要在扣能量之前取：蓄满那一发带无限穿透与叠满灼痕。
-        boolean fullCharge = player.isChargeFull();
-        double multiplier = player.consumeCharge();
-        if (multiplier <= 0.0) return;
-        if (!attackSystem.fireChargedShot(player, aimX, aimY, multiplier, fullCharge)) {
-            // 打不出去（施法中 / 冲刺中）：把已经扣掉的能量退回来，不能白花蓝量。
-            player.restoreAttackCharges(GameConfig.LIGHT_CHARGE_ENERGY_COST);
-        }
-    }
-
-    /**
      * 控制器每帧上报右键是否按着。
      *
      * <p>只传"当前状态"，不传事件：这样暂停、失焦、鼠标移出窗口都只是把状态置回 false，
      * 不会留下"以为还按着"的悬空状态。
      */
-    public void setSecondaryHeld(boolean held) { secondaryHeld = held; }
+    public void setSecondaryHeld(boolean held) { stance.setSecondaryHeld(held); }
 
     /** 本局实际游玩用时（秒）；通关 / 阵亡后停止累计。 */
     public double getRunTime() { return runTime; }

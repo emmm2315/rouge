@@ -21,6 +21,74 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class GameSessionTest {
+    @Test
+    void clearingInputCancelsChargeWithoutFiringAndDiscardsQueuedActions() {
+        GameSession session = new GameSession();
+        session.newRun("2024");
+        Player player = session.getPlayer();
+        session.setSecondaryHeld(true);
+        for (int i = 0; i < 12; i++) update(session);
+        assertTrue(player.isCharging());
+        int energy = player.getSkillEnergy();
+        session.requestDash();
+        session.requestInteract();
+        Pickup coin = new Pickup(Pickup.Type.COIN, player.getX(), player.getY(), 7);
+        session.getNavigation().getCurrentRoom().loot().addPickup(coin);
+
+        session.clearPendingInput();
+        update(session);
+
+        assertFalse(player.isCharging());
+        assertFalse(player.isDashing());
+        assertEquals(energy, player.getSkillEnergy());
+        assertTrue(session.getAttackSystem().getProjectiles().isEmpty());
+        assertTrue(session.getPickups().contains(coin));
+        session.setSecondaryHeld(true);
+        update(session);
+        assertTrue(player.isCharging(), "恢复后下一次按下仍应能够蓄力");
+    }
+
+    @Test
+    void newRunDiscardsPendingInteraction() {
+        GameSession session = new GameSession();
+        session.newRun("2024");
+        session.requestInteract();
+        session.newRun("2024");
+        Player player = session.getPlayer();
+        Pickup coin = new Pickup(Pickup.Type.COIN, player.getX(), player.getY(), 7);
+        session.getNavigation().getCurrentRoom().loot().addPickup(coin);
+
+        update(session);
+
+        assertEquals(0, session.getCoins());
+        assertTrue(session.getPickups().contains(coin));
+        session.requestInteract();
+        update(session);
+        assertEquals(7, session.getCoins());
+    }
+
+    @Test
+    void floorChangeDoesNotCountAsShadowAttack() {
+        GameSession session = new GameSession();
+        session.newRun("2024");
+        enterFloorBossRoom(session);
+        defeatTheBoss(session);
+        Player player = session.getPlayer();
+        player.toggleWorld();
+        session.update(AppConfig.FIXED_DT, 0, 0, player.getX() + 100, player.getY(), true);
+        for (int i = 0; i < 60; i++) update(session);
+        assertTrue(session.getAttackSystem().getMeleeReleaseCount() > 0);
+        useThePortal(session);
+        assertEquals(2, session.getFloor());
+        player.equip(EquipmentType.NIGHTSTEP_CLOAK);
+        double speed = player.movementSpeed();
+
+        update(session);
+
+        assertEquals(speed, player.movementSpeed(), 1e-9,
+                "重置攻击计数不能触发夜行披风");
+    }
+
 
     @Test
     void worldShiftConsumesPulseAndClearsNearbyEnemyProjectiles() {

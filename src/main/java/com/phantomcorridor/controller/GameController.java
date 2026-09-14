@@ -66,19 +66,12 @@ public final class GameController {
         view.bindSecondary(held -> secondaryHeld = held);
         view.bindClick(this::pointerClicked);
         view.bindLifecycle(this::start, this::stop);
-        session.newRun(settings.getDevSeed());
+        newRun();
     }
 
     public void newRun() {
         session.newRun(settings.getDevSeed(), settings.getDifficulty());
-        input.clear();
-        shiftHeld = false;
-        interactHeld = false;
-        attackHeld = false;
-        secondaryHeld = false;
-        session.setSecondaryHeld(false);
-        dashHeld = false;
-        skillHeld = skill2Held = finisherHeld = modifierHeld = false;
+        resetInput();
         aimX = session.getPlayer().getX() + 1.0;
         aimY = session.getPlayer().getY();
         onSessionUpdated.accept(session);
@@ -97,12 +90,16 @@ public final class GameController {
             loop.stop();
             running = false;
         }
+        resetInput();
+    }
+
+    private void resetInput() {
         input.clear();
         shiftHeld = false;
         interactHeld = false;
         attackHeld = false;
         secondaryHeld = false;
-        session.setSecondaryHeld(false);
+        session.clearPendingInput();
         dashHeld = false;
         skillHeld = skill2Held = finisherHeld = modifierHeld = false;
     }
