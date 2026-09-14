@@ -187,12 +187,13 @@ public final class GameSession {
             roomAnnouncementRemaining = 2.0;
         }
         int kills = enemies.consumeKills();
+        int phaseReward = enemies.consumePhaseEnergyReward();
         Room current = navigation.getCurrentRoom();
         if (current.type() == RoomType.BATTLE || current.type() == RoomType.BOSS
                 || current.type() == RoomType.EVENT) {
             current.setCleared(enemies.isRoomCleared());
         }
-        if (kills > 0) player.restorePhaseEnergy(kills * GameConfig.PHASE_ENERGY_PER_KILL);
+        if (phaseReward > 0) player.restorePhaseEnergy(phaseReward);
         if (kills > 0) player.addCoins(kills + Math.floorMod((int) (dungeonSeed + kills * 13L), kills * 3 + 1));
         // combatActive = !enemies.isRoomCleared();   // 同上：这个状态没有任何读取点
         if (interactRequested) {
@@ -215,7 +216,20 @@ public final class GameSession {
 
     public boolean tryUseAbility(boolean finisher, double targetX, double targetY) {
         if (runCleared || getPendingEquipment() != null) return false;
-        return abilities.tryCast(player, finisher, targetX, targetY, navigation);
+        return finisher
+                ? abilities.tryCastFinisher(player, targetX, targetY, navigation)
+                : abilities.tryCast(player, 0, targetX, targetY, navigation);
+    }
+
+    /** 释放第二个形态技能；技能槽 0 仍由旧的 Q 接口兼容。 */
+    public boolean tryUseSkill(int skillIndex, double targetX, double targetY) {
+        if (runCleared || getPendingEquipment() != null) return false;
+        return abilities.tryCast(player, skillIndex, targetX, targetY, navigation);
+    }
+
+    /** 统一命名的重载，供 UI/自动化输入按技能槽调用。 */
+    public boolean tryUseAbility(int skillIndex, double targetX, double targetY) {
+        return tryUseSkill(skillIndex, targetX, targetY);
     }
 
     public PlayerAbilitySystem getAbilities() { return abilities; }

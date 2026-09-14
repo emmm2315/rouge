@@ -146,7 +146,7 @@ public final class GameRenderer {
     private static final double HUD_X = 20.0;
     private static final double HUD_Y = 18.0;
     private static final double HUD_WIDTH = 350.0;
-    private static final double HUD_HEIGHT = 130.0;
+    private static final double HUD_HEIGHT = 156.0;
     /** 数值列的起点与宽度：生命条、攻击格、相位条共用同一条基线，视觉上对齐。 */
     private static final double HUD_VALUE_X = 92.0;
     private static final double HUD_VALUE_WIDTH = 190.0;
@@ -186,11 +186,14 @@ public final class GameRenderer {
     private static final Image REWARD_ICONS = loadUiImage("reward_icons_v1.png");
     private static final Image WEAPON_ICONS = loadUiImage("weapons_v1.png");
     private static final Image EQUIPMENT_ICONS = loadUiImage("equipment_v1.png");
+    /** V3 主动技能与终结技图标（由角色模型资源的独立透明帧提供）。 */
+    private static final Map<String, Image> ABILITY_ICONS = loadAbilityIcons();
     /** 受击闪白用的"纯白剪影"缓存：按需生成，同一张贴图只算一次。 */
     private static final Map<Image, Image> WHITE_SILHOUETTES = new HashMap<>();
     private static final Map<String, Image> EQUIPMENT_ASSETS = loadEquipmentAssets();
     private static final Map<String, Image> MONSTER_IMAGES = new HashMap<>();
     private static final Map<String, Image[]> MONSTER_FRAME_SETS = new HashMap<>();
+    private static final Map<String, Image[]> PLAYER_VFX = new HashMap<>();
 
     public void render(GraphicsContext g, GameSession session, double fps) {
         g.setImageSmoothing(false);
@@ -657,7 +660,9 @@ public final class GameRenderer {
             }
         }
         if (!light && session.getAttackSystem().isMeleeVisible()) {
-            drawMeleeArc(g, session, player);
+            for (var strike : session.getAttackSystem().getMeleeStrikes()) {
+                drawMeleeArc(g, player, strike);
+            }
         }
         if (session.isPhasePulseVisible()) {
             Image[] aura = light ? LIGHT_AURA : SHADOW_AURA;
@@ -766,13 +771,12 @@ public final class GameRenderer {
      * <p>扇形角度与距离都读模型里那一轮的实际值：环月镰是 360° 环斩、重剑是 40° 窄劈，
      * 用固定常量画就会让玩家看到的范围和实际结算范围对不上。
      */
-    private void drawMeleeArc(GraphicsContext g, GameSession session, Player player) {
-        var attacks = session.getAttackSystem();
-        double angle = Math.toDegrees(attacks.getMeleeAngleRadians());
-        double arc = attacks.getMeleeArcDegrees();
-        double range = attacks.getMeleeRange();
+    private void drawMeleeArc(GraphicsContext g, Player player, com.phantomcorridor.model.combat.PlayerAttackSystem.MeleeStrike strike) {
+        double angle = Math.toDegrees(strike.angleRadians());
+        double arc = strike.arcDegrees();
+        double range = strike.range();
         double progress = Math.max(0.0, Math.min(1.0,
-                attacks.getMeleeVisualTime() / GameConfig.SHADOW_MELEE_VISIBLE_TIME));
+                strike.visualTime() / GameConfig.SHADOW_MELEE_VISIBLE_TIME));
         double fade = 1.0 - progress * progress;
         double start = -angle - arc / 2.0;
         g.save();
@@ -791,7 +795,7 @@ public final class GameRenderer {
         g.fillOval(player.getX() - range, player.getY() - range, range * 2, range * 2);
         if (arc < 360.0 && SHADOW_SLASHES.length > 0) {
             Image slash = SHADOW_SLASHES[Math.min(SHADOW_SLASHES.length - 1,
-                    (int) (attacks.getMeleeVisualTime() / GameConfig.SHADOW_MELEE_VISIBLE_TIME * SHADOW_SLASHES.length))];
+                    (int) (strike.visualTime() / GameConfig.SHADOW_MELEE_VISIBLE_TIME * SHADOW_SLASHES.length))];
             double size = range * 2.0;
             g.save();
             g.setGlobalAlpha(fade);
@@ -822,11 +826,28 @@ public final class GameRenderer {
             boolean light = strike.world() == WorldType.LIGHT;
             double progress = abilities.visualProgress();
             double radius = strike.radius();
+            String direction = PlayerAnimationCatalog.direction(Math.cos(strike.angle()), Math.sin(strike.angle()));
+            String vfxAction = strike.finisher() ? "finisher" : "skill/" + String.format("%02d", strike.skillIndex() + 1);
+            Image[] vfx = playerVfx(strike.world(), direction, vfxAction);
+            if (vfx.length > 0) {
+                Image frame = animationFrame(vfx, progress, 1.0, false, vfx.length);
+                double size = strike.finisher() ? radius * 2.15 : radius * 1.75;
+                double height = size * frame.getHeight() / Math.max(1.0, frame.getWidth());
+                g.save();
+                g.setGlobalAlpha(strike.finisher() ? 0.96 : 0.88);
+                g.setGlobalBlendMode(BlendMode.ADD);
+                g.drawImage(frame, strike.x() - size / 2.0, strike.y() - height / 2.0, size, height);
+                g.setGlobalBlendMode(BlendMode.SRC_OVER);
+                g.restore();
+            }
             double start = -Math.toDegrees(strike.angle()) - strike.arc() / 2;
             Color color = light ? LIGHT_GOLD : SHADOW_VIOLET;
             g.save();
+            // V3 有完整独立特效时，保留很淡的判定轮廓，避免几何范围与动画脱节；
+            // 找不到资源时再显示完整的旧式几何特效作为兜底。
+            double shapeAlpha = vfx.length > 0 ? 0.025 : 0.07;
             g.setFill(Color.color(color.getRed(), color.getGreen(), color.getBlue(),
-                    abilities.isCasting() ? 0.07 + 0.08 * progress : 0.25 * (1 - progress)));
+                    shapeAlpha + 0.08 * progress));
             g.fillArc(strike.x() - radius, strike.y() - radius, radius * 2, radius * 2, start, strike.arc(), ArcType.ROUND);
             g.setStroke(color.deriveColor(0, 1, 1.4, abilities.isCasting() ? 0.8 : 1 - progress));
             g.setLineWidth(abilities.isCasting() ? 2 : strike.finisher() ? 9 : 5);
@@ -2102,6 +2123,33 @@ public final class GameRenderer {
         return frames.toArray(Image[]::new);
     }
 
+    private static Map<String, Image> loadAbilityIcons() {
+        Map<String, Image> result = new HashMap<>();
+        String[] names = {"light_skill_01", "light_skill_02", "shadow_skill_01",
+                "shadow_skill_02", "light_finisher", "shadow_finisher"};
+        for (String name : names) {
+            Image image = loadUiImage("ability_icons/" + name + ".png");
+            if (image != null && !image.isError()) result.put(name, image);
+        }
+        return result;
+    }
+
+    private static Image[] playerVfx(WorldType world, String direction, String action) {
+        String key = (world == WorldType.LIGHT ? "light" : "shadow") + "/" + direction + "/" + action;
+        Image[] cached = PLAYER_VFX.get(key);
+        if (cached != null) return cached;
+        List<Image> frames = new ArrayList<>();
+        for (int i = 0; i < 64; i++) {
+            var resource = GameRenderer.class.getResource("/com/phantomcorridor/sprites/player_v3/vfx/"
+                    + key + "/phase_" + String.format("%02d", i) + ".png");
+            if (resource == null) break;
+            frames.add(new Image(resource.toExternalForm(), false));
+        }
+        Image[] result = frames.toArray(Image[]::new);
+        PLAYER_VFX.put(key, result);
+        return result;
+    }
+
     private static Image loadUiImage(String name) {
         var resource = GameRenderer.class.getResource("/com/phantomcorridor/ui/" + name);
         return resource == null ? null : new Image(resource.toExternalForm(), false);
@@ -2184,12 +2232,9 @@ public final class GameRenderer {
         // 两个面板各说一半，玩家才分得清哪一份是自己带的、哪一份是捡来的。
         g.setFill(Color.web("#a99bb2"));
         g.setFont(Font.font("Microsoft YaHei UI", 12));
-        String skillStatus = session.getAbilities().skillCooldown() > 0
-                ? String.format("%.1fs", session.getAbilities().skillCooldown()) : "6 蓝";
-        String finisherStatus = session.getAbilities().finisherCooldown() > 0
-                ? String.format("%.0fs", session.getAbilities().finisherCooldown()) : "100 相位";
-        g.fillText("Q " + skillStatus + "　R " + finisherStatus + "　Tab 切界", HUD_X + 14, HUD_Y + 114);
+        g.fillText("Q/F 技能　R 终结技　Tab 切界", HUD_X + 14, HUD_Y + 145);
 
+        drawAbilityHudIcons(g, session, light);
         drawWorldBadge(g, domain, light);
         drawEquipmentBar(g, session);
         drawBossBanner(g, session);
@@ -2197,6 +2242,40 @@ public final class GameRenderer {
         g.setFill(Color.rgb(230, 220, 235, 0.28));
         g.setFont(Font.font("Consolas", 11));
         g.fillText(String.format("%.0f FPS", fps), AppConfig.VIEW_WIDTH - 150, 40);
+    }
+
+    private void drawAbilityHudIcons(GraphicsContext g, GameSession session, boolean light) {
+        var abilities = session.getAbilities();
+        String form = light ? "light" : "shadow";
+        String[] keys = {form + "_skill_01", form + "_skill_02", form + "_finisher"};
+        String[] labels = {"Q", "F", "R"};
+        double size = 30.0;
+        for (int i = 0; i < keys.length; i++) {
+            double x = HUD_X + 14 + i * 48.0;
+            double y = HUD_Y + 91;
+            Image icon = ABILITY_ICONS.get(keys[i]);
+            double cooldown = i < 2 ? abilities.skillCooldown(i) : abilities.finisherCooldown();
+            boolean ready = cooldown <= 0.0001 && (i < 2
+                    ? session.getPlayer().getSkillEnergy() >= GameConfig.SKILL_ENERGY_COST
+                    : session.getPlayer().getPhaseEnergy() >= GameConfig.FINISHER_PHASE_COST);
+            g.setFill(Color.rgb(5, 4, 10, 0.88));
+            g.fillRoundRect(x - 2, y - 2, size + 4, size + 4, 6, 6);
+            if (icon != null) {
+                g.setGlobalAlpha(ready ? 1.0 : 0.38);
+                g.drawImage(icon, x, y, size, size);
+                g.setGlobalAlpha(1.0);
+            } else {
+                g.setFill(i == 2 ? Color.web("#b76cff") : Color.web("#67b9ff"));
+                g.fillRoundRect(x + 3, y + 3, size - 6, size - 6, 5, 5);
+            }
+            if (!ready) {
+                g.setFill(Color.rgb(0, 0, 0, 0.58));
+                g.fillArc(x, y, size, size, 90, 360 * Math.min(1, cooldown / (i == 2 ? GameConfig.FINISHER_COOLDOWN : GameConfig.SKILL_COOLDOWN)), ArcType.ROUND);
+            }
+            g.setFill(Color.web("#f7efff"));
+            g.setFont(Font.font("Consolas", FontWeight.BOLD, 10));
+            g.fillText(labels[i], x + 8, y + size + 11);
+        }
     }
 
     /**
@@ -2252,7 +2331,7 @@ public final class GameRenderer {
         g.setTextAlign(TextAlignment.CENTER);
         g.setFill(light ? Color.rgb(237, 210, 156, 0.56) : Color.rgb(198, 169, 230, 0.58));
         g.setFont(Font.font("Microsoft YaHei UI", 13));
-        g.fillText("WASD 移动 · 左键普攻 · Q 技能 · R 终结技 · 空格闪避 · Tab 切界 · Shift+Tab 强化切界 · E 交互 · 1-3 丢装备 · Esc 暂停",
+        g.fillText("WASD 移动 · 左键普攻 · Q/F 技能 · R 终结技 · 空格闪避 · Tab 切界 · Shift+Tab 强化切界 · E 交互 · 1-3 丢装备 · Esc 暂停",
                 AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT - 24.0);
         g.setTextAlign(TextAlignment.LEFT);
     }

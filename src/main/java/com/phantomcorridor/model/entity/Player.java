@@ -239,6 +239,11 @@ public final class Player {
         phaseEnergy = clamp(phaseEnergy + Math.max(0.0, amount), 0.0, GameConfig.PHASE_ENERGY_MAX);
     }
 
+    /** 当前可用于终结技/强化切界的完整相位碎片数（每 10 点能量折算一枚）。 */
+    public int getPhaseFragments() {
+        return (int) Math.floor(phaseEnergy / GameConfig.PHASE_ENERGY_PER_FRAGMENT + 1e-9);
+    }
+
     public void consumePhaseEnergy(double amount) {
         phaseEnergy = clamp(phaseEnergy - Math.max(0.0, amount), 0.0, GameConfig.PHASE_ENERGY_MAX);
     }
