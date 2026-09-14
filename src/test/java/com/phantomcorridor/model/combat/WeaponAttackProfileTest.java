@@ -284,7 +284,7 @@ class WeaponAttackProfileTest {
     }
 
     @Test
-    void attackChargeIsConsumedOncePerRoundNotPerPellet() {
+    void weaponPelletsDoNotConsumeSkillEnergy() {
         // 设计文档：「每次攻击」指成功启动的一轮攻击，不是每颗弹丸。
         Player player = lightPlayer(EquipmentType.PRISM_FAN_WAND);
         PlayerAttackSystem attacks = new PlayerAttackSystem();
@@ -292,6 +292,6 @@ class WeaponAttackProfileTest {
 
         attacks.tryAttack(player, 200.0, 100.0);
 
-        assertEquals(before - 1, player.getAttackCharges(), "三发散射只算一轮攻击");
+        assertEquals(before, player.getSkillEnergy(), "普攻散射不消耗技能蓝条");
     }
 }

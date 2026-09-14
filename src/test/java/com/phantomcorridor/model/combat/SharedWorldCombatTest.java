@@ -72,7 +72,7 @@ class SharedWorldCombatTest {
 
     @Test void basicShiftKeepsEnergyAndHasOnlyTemporarySlow() {
         Player player = new Player(300, 300);
-        player.consumePhaseEnergy(65);
+        player.restorePhaseEnergy(35);
         WorldShiftSystem shift = new WorldShiftSystem();
         assertTrue(shift.tryShift(player));
         assertEquals(35, player.getPhaseEnergy());
@@ -87,6 +87,7 @@ class SharedWorldCombatTest {
 
     @Test void empoweredShiftGrantsProtectionAndPulse() {
         Player player = new Player(300, 300);
+        player.restorePhaseEnergy(100);
         WorldShiftSystem shift = new WorldShiftSystem();
         assertTrue(shift.tryShift(player));
         assertTrue(shift.consumePulse());

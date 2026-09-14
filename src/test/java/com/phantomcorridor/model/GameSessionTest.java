@@ -30,7 +30,8 @@ class GameSessionTest {
         session.getEnemyProjectiles().add(new EnemyProjectile(
                 x + GameConfig.PHASE_PULSE_RADIUS + 20.0, y, WorldType.LIGHT));
 
-        assertTrue(session.tryShiftWorld());
+        session.getPlayer().restorePhaseEnergy(100);
+        assertTrue(session.tryShiftWorld(true));
         assertTrue(session.isPhasePulseVisible());
         assertEquals(1, session.getEnemyProjectiles().getProjectiles().size());
         assertFalse(session.getWorldShift().consumePulse(), "脉冲事件必须由会话层即时消费");

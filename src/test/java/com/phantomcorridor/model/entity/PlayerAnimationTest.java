@@ -62,9 +62,9 @@ class PlayerAnimationTest {
         player.updateAnimation(0.3, 0, 0, false, false);
         while (player.consumeAttackCharge()) { }
         attacks.update(2);
-        assertFalse(attacks.tryAttack(player, 1, 0));
+        assertTrue(attacks.tryAttack(player, 1, 0));
         player.updateAnimation(0.01, 0, 0, true, false);
-        assertEquals(PlayerAnimationState.IDLE, player.getAnimationState());
+        assertEquals(PlayerAnimationState.ATTACKING, player.getAnimationState());
     }
 
     @Test void damageThenInvulnerabilityAndDashHaveIndependentActions() {

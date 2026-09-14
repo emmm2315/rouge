@@ -83,6 +83,8 @@ final class PlayerSprites {
             case MOVING -> "move";
             case DASHING -> "dodge";
             case ATTACKING -> "attack";
+            case SKILL -> "attack";
+            case FINISHER -> "finisher_cast";
             case HIT -> "hit";
             case INVULNERABLE -> "invulnerable";
             case SHIFTING -> "transition";

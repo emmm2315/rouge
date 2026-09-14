@@ -198,7 +198,7 @@ public final class PlayerAttackSystem {
     }
 
     public boolean tryAttack(Player player, double targetX, double targetY) {
-        if (player.getHp() <= 0 || player.isDashing() || cooldownRemaining > 0.0) {
+        if (player.getHp() <= 0 || player.isCastingAbility() || player.isDashing() || cooldownRemaining > 0.0) {
             return false;
         }
         double[] aim = aimDirection(player, targetX, targetY);
@@ -218,7 +218,7 @@ public final class PlayerAttackSystem {
         if (profile == null) return false;
         currentProfile = profile;
 
-        if (!player.consumeAttackCharge()) return false;
+        // Basic attacks are the sustainable fallback; the blue resource is reserved for skills.
         player.startAttackAnimation(unitX, unitY, profile.windup());
         // 计数只在**真的启动了一轮攻击**之后才推进：蓝条不够、没有可用方案时不算一轮，
         // 否则余震指环会被空按刷出来。

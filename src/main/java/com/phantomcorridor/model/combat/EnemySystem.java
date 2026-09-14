@@ -272,7 +272,7 @@ public final class EnemySystem {
                 visualEffects.add(EnemyVisualEffect.body(enemy.getKind(), enemy.getWorld(), "death", enemy.getFacing(),
                         enemy.getX(), enemy.getY(), displayWidth(enemy.getKind()), .70));
                 activeCasts.remove(enemy);
-                killsSinceLastRead++;
+                if (!enemy.isSummoned()) killsSinceLastRead++;
                 bossFell |= enemy.isBoss();
                 iterator.remove();
                 continue;
@@ -1242,6 +1242,10 @@ public final class EnemySystem {
      * 所以要先知道这一击是从哪个方向来的（弹体当前位置 / 玩家位置 / 爆心）。
      */
     private int applyDamage(Player player, Enemy enemy, double coefficient, double fromX, double fromY) {
+        return applyDamage(player, enemy, coefficient, fromX, fromY, true);
+    }
+
+    private int applyDamage(Player player, Enemy enemy, double coefficient, double fromX, double fromY, boolean gainPhase) {
         WorldType world = player.getCurrentWorld();
         int stacks = world == WorldType.SHADOW ? enemy.consumeScorch() : 0;
         if (world == WorldType.LIGHT) {
@@ -1249,7 +1253,7 @@ public final class EnemySystem {
         }
         coefficient *= enemy.getKind().affinity().damageMultiplier(world, stacks > 0);
         coefficient += stacks * GameConfig.SCORCH_DAMAGE_PER_STACK;
-        if (stacks > 0) player.restorePhaseEnergy(stacks * GameConfig.SCORCH_ENERGY_PER_STACK);
+        if (stacks > 0 && gainPhase) player.restorePhaseEnergy(stacks * GameConfig.SCORCH_ENERGY_PER_STACK);
         double raw = player.getCurrentBaseDamage()
                 * coefficient * player.damageMultiplier(player.getCurrentWorld())
                 * hunterBonus(player, enemy);
@@ -1257,6 +1261,15 @@ public final class EnemySystem {
         int dealt = enemy.takeHit(scaledPlayerDamage(raw));
         if (dealt > 0) recordEnemyHit(enemy, dealt);
         return dealt;
+    }
+
+    /** One cast resolves once per target, using real hurtboxes, affinity, armor and terrain. */
+    public void resolveAbility(Player player, PlayerAbilitySystem.Strike strike, RoomNavigationSystem navigation) {
+        for (Enemy enemy : enemies) {
+            if (enemy.isDead() || !strike.covers(enemy.getHitboxCenterX(), enemy.getHitboxCenterY(), enemy.getHitboxRadius())) continue;
+            if (!navigation.isSegmentClear(strike.x(), strike.y(), enemy.getHitboxCenterX(), enemy.getHitboxCenterY(), 1, strike.world())) continue;
+            applyDamage(player, enemy, strike.coefficient(), strike.x(), strike.y(), !strike.finisher());
+        }
     }
 
     /**

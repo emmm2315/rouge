@@ -7,6 +7,7 @@ import com.phantomcorridor.model.entity.Enemy;
 import com.phantomcorridor.model.entity.EnemyKind;
 import com.phantomcorridor.model.entity.Player;
 import com.phantomcorridor.model.combat.PlayerAttackSystem;
+import com.phantomcorridor.model.combat.PlayerAbilitySystem;
 import com.phantomcorridor.model.combat.EnemyProjectileSystem;
 import com.phantomcorridor.model.combat.EnemySystem;
 import com.phantomcorridor.model.combat.SummonRift;
@@ -22,6 +23,7 @@ public final class GameSession {
     private final Player player = new Player(AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0);
     private final WorldShiftSystem worldShift = new WorldShiftSystem();
     private final PlayerAttackSystem attackSystem = new PlayerAttackSystem();
+    private final PlayerAbilitySystem abilities = new PlayerAbilitySystem();
     private final EnemyProjectileSystem enemyProjectiles = new EnemyProjectileSystem();
     private final EnemySystem enemies = new EnemySystem();
     private final RoomNavigationSystem navigation = new RoomNavigationSystem();
@@ -58,6 +60,7 @@ public final class GameSession {
     public void newRun(String configuredSeed, Difficulty difficulty) {
         player.reset(AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0);
         worldShift.reset();
+        abilities.reset();
         runSeed = MapGenerator.parseSeed(configuredSeed);
         this.difficulty = difficulty == null ? Difficulty.NORMAL : difficulty;
         player.setDifficulty(this.difficulty);
@@ -78,6 +81,8 @@ public final class GameSession {
     private void startFloor() {
         dungeonSeed = runSeed + (floor - 1) * GameConfig.FLOOR_SEED_STEP;
         attackSystem.reset();
+        abilities.clearRoomEffects();
+        player.cancelAbilityAnimation();
         enemyProjectiles.reset();
         enemies.reset();
         enemies.setFloor(floor);
@@ -115,6 +120,8 @@ public final class GameSession {
         phasePulseVisibleRemaining = Math.max(0.0, phasePulseVisibleRemaining - dt);
         roomAnnouncementRemaining = Math.max(0.0, roomAnnouncementRemaining - Math.max(0.0, dt));
         if (player.getHp() <= 0 || runCleared) {
+            abilities.clearRoomEffects();
+            player.cancelAbilityAnimation();
             player.updateDash(dt);
             player.updateAnimation(dt, 0.0, 0.0, false, false);
             return;
@@ -126,7 +133,7 @@ public final class GameSession {
         // 冲刺优先于普通移动：冲刺期间忽略方向输入，位移完全由冲刺方向决定。
         if (dashRequested) {
             dashRequested = false;
-            player.tryStartDash(movementX, movementY);
+            if (!abilities.isCasting()) player.tryStartDash(movementX, movementY);
         }
         if (player.isDashing()) {
             // 只走"这一段冲刺还剩的时间"：否则最后一帧会按整帧位移，固定 150 像素会随帧对齐漂移。
@@ -140,6 +147,8 @@ public final class GameSession {
         double actualMovementY = player.getY() - movementStartY;
         player.updateDash(dt);
         if (navigation.consumeRoomChanged()) {
+            abilities.clearRoomEffects();
+            player.cancelAbilityAnimation();
             attackSystem.clearTransientAttacks();
             Room entered = navigation.getCurrentRoom();
             roomContent.enterRoom(entered, player);
@@ -156,6 +165,7 @@ public final class GameSession {
             lastMeleeReleaseCount = attackSystem.getMeleeReleaseCount();
             player.onShadowAttackReleased();
         }
+        abilities.update(dt, player, enemies, navigation);
         enemies.update(dt, player, attackSystem, navigation);
         applyHitKnockback();
         if (enemies.consumePhaseTransitions() > 0) {
@@ -176,7 +186,7 @@ public final class GameSession {
                 || current.type() == RoomType.EVENT) {
             current.setCleared(enemies.isRoomCleared());
         }
-        if (kills > 0) player.restorePhaseEnergy(kills * GameConfig.PHASE_ENERGY_PER_FRAGMENT);
+        if (kills > 0) player.restorePhaseEnergy(kills * GameConfig.PHASE_ENERGY_PER_KILL);
         if (kills > 0) player.addCoins(kills + Math.floorMod((int) (dungeonSeed + kills * 13L), kills * 3 + 1));
         // combatActive = !enemies.isRoomCleared();   // 同上：这个状态没有任何读取点
         if (interactRequested) {
@@ -184,8 +194,8 @@ public final class GameSession {
             interact(current);
         }
         player.restorePhaseEnergy(GameConfig.PHASE_ENERGY_REGEN_PER_SEC * dt);
-        player.updateAttackCharges(dt);
-        if (attacking) {
+        player.updateSkillEnergy(dt);
+        if (attacking && !abilities.isCasting()) {
             attackSystem.tryAttack(player, aimX, aimY);
         }
         // Animation follows actual movement and successful attack events, not held input.
@@ -194,12 +204,24 @@ public final class GameSession {
     }
 
     public boolean tryShiftWorld() {
+        return tryShiftWorld(false);
+    }
+
+    public boolean tryUseAbility(boolean finisher, double targetX, double targetY) {
+        if (runCleared || getPendingEquipment() != null) return false;
+        return abilities.tryCast(player, finisher, targetX, targetY, navigation);
+    }
+
+    public PlayerAbilitySystem getAbilities() { return abilities; }
+
+    public boolean tryShiftWorld(boolean empowered) {
+        if (runCleared || abilities.isCasting() || getPendingEquipment() != null) return false;
         WorldType targetWorld = player.getCurrentWorld() == WorldType.LIGHT
                 ? WorldType.SHADOW : WorldType.LIGHT;
         double[] safePosition = navigation.findNearestSafePosition(
                 player.getX(), player.getY(), targetWorld);
         if (safePosition == null) return false;
-        if (!worldShift.tryShift(player)) return false;
+        if (!worldShift.tryShift(player, empowered)) return false;
         player.setPosition(safePosition[0], safePosition[1]);
         if (worldShift.consumePulse()) {
             enemyProjectiles.clearWithin(player.getX(), player.getY(), GameConfig.PHASE_PULSE_RADIUS);

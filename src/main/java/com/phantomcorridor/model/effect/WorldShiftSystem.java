@@ -19,10 +19,15 @@ public final class WorldShiftSystem {
     }
 
     public boolean tryShift(Player player) {
+        return tryShift(player, player.getPhaseEnergy() >= GameConfig.PHASE_ENERGY_PER_SWITCH);
+    }
+
+    public boolean tryShift(Player player, boolean requestEmpowered) {
         if (cooldownRemaining > 0.0 || player.getHp() <= 0) {
             return false;
         }
-        boolean empowered = player.getPhaseEnergy() >= GameConfig.PHASE_ENERGY_PER_SWITCH;
+        boolean empowered = requestEmpowered && player.getPhaseEnergy() >= GameConfig.PHASE_ENERGY_PER_SWITCH;
+        if (requestEmpowered && !empowered) return false;
         player.toggleWorld();
         if (empowered) player.consumePhaseEnergy(GameConfig.PHASE_ENERGY_PER_SWITCH);
         player.applyShiftProtection(empowered);

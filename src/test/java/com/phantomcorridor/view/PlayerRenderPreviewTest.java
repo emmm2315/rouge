@@ -23,7 +23,8 @@ class PlayerRenderPreviewTest {
                 GameSession session = new GameSession();
                 session.newRun("v3-preview");
                 session.update(0.05, -1, 0, 300, 300, true);
-                Canvas game = new Canvas(1280, 720);
+                Canvas game = new Canvas(com.phantomcorridor.config.AppConfig.VIEW_WIDTH,
+                        com.phantomcorridor.config.AppConfig.VIEW_HEIGHT);
                 new GameRenderer().render(game.getGraphicsContext2D(), session, 60);
                 save(game, "target/player-v3-gameplay.png");
                 session.update(3.0, 0, 0, 900, 450, false);
@@ -62,6 +63,24 @@ class PlayerRenderPreviewTest {
                     }
                 }
                 save(sheet, "target/player-v3-contact-sheet.png");
+                for (boolean light : new boolean[]{true, false}) {
+                    for (boolean finisher : new boolean[]{false, true}) {
+                        session.newRun("v3-preview");
+                        session.update(3, 0, 0, 800, 480, false);
+                        if (!light) session.getPlayer().toggleWorld();
+                        session.update(0.3, 0, 0, 800, 480, false);
+                        session.getPlayer().restorePhaseEnergy(100);
+                        var p = session.getPlayer();
+                        org.junit.jupiter.api.Assertions.assertTrue(session.tryUseAbility(finisher, p.getX() + 80, p.getY()));
+                        String prefix = "target/player-v3-" + (light ? "light-" : "shadow-") + (finisher ? "finisher" : "skill");
+                        session.update(finisher ? 0.2 : 0.1, 0, 0, 800, 480, false);
+                        new GameRenderer().render(game.getGraphicsContext2D(), session, 60);
+                        save(game, prefix + "-cast.png");
+                        session.update(0.3, 0, 0, 800, 480, false);
+                        new GameRenderer().render(game.getGraphicsContext2D(), session, 60);
+                        save(game, prefix + ".png");
+                    }
+                }
                 done.complete(null);
             } catch (Throwable error) { done.completeExceptionally(error); }
         };

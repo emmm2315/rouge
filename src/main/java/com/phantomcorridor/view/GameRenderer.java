@@ -213,6 +213,7 @@ public final class GameRenderer {
         // 拖尾垫在角色之下：残影只该在身后露出来，不能糊在自己脸上。
         drawDashTrail(g, player, light);
         drawPlayer(g, player, light);
+        drawPlayerAbilities(g, session);
         // 攻击层在角色之后绘制，避免角色把斩击和投射物遮住。
         drawAttacks(g, session, light);
         drawPhasePulse(g, session, light);
@@ -844,6 +845,46 @@ public final class GameRenderer {
         g.strokeArc(player.getX() - bladeRadius, player.getY() - bladeRadius,
                 bladeRadius * 2, bladeRadius * 2, start, arc, ArcType.OPEN);
         g.restore();
+    }
+
+    private void drawPlayerAbilities(GraphicsContext g, GameSession session) {
+        var abilities = session.getAbilities();
+        var strike = abilities.visual();
+        if (strike != null) {
+            boolean light = strike.world() == WorldType.LIGHT;
+            double progress = abilities.visualProgress();
+            double radius = strike.radius();
+            double start = -Math.toDegrees(strike.angle()) - strike.arc() / 2;
+            Color color = light ? LIGHT_GOLD : SHADOW_VIOLET;
+            g.save();
+            g.setFill(Color.color(color.getRed(), color.getGreen(), color.getBlue(),
+                    abilities.isCasting() ? 0.07 + 0.08 * progress : 0.25 * (1 - progress)));
+            g.fillArc(strike.x() - radius, strike.y() - radius, radius * 2, radius * 2, start, strike.arc(), ArcType.ROUND);
+            g.setStroke(color.deriveColor(0, 1, 1.4, abilities.isCasting() ? 0.8 : 1 - progress));
+            g.setLineWidth(abilities.isCasting() ? 2 : strike.finisher() ? 9 : 5);
+            g.strokeArc(strike.x() - radius, strike.y() - radius, radius * 2, radius * 2, start, strike.arc(), ArcType.OPEN);
+            if (!abilities.isCasting()) {
+                double sweep = radius * (0.3 + progress * 0.7);
+                g.setLineWidth(strike.finisher() ? 14 : 7);
+                g.strokeArc(strike.x() - sweep, strike.y() - sweep, sweep * 2, sweep * 2, start, strike.arc(), ArcType.OPEN);
+                if (strike.finisher()) {
+                    for (int i = 0; i < 12; i++) {
+                        double a = i * Math.PI / 6 + progress;
+                        g.strokeLine(strike.x() + Math.cos(a) * sweep * 0.85, strike.y() + Math.sin(a) * sweep * 0.85,
+                                strike.x() + Math.cos(a) * sweep, strike.y() + Math.sin(a) * sweep);
+                    }
+                }
+            }
+            g.restore();
+        }
+        if (!abilities.feedback().isEmpty()) {
+            g.save();
+            g.setTextAlign(TextAlignment.CENTER);
+            g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 16));
+            g.setFill(Color.web("#ede0ff"));
+            g.fillText(abilities.feedback(), AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT - 52);
+            g.restore();
+        }
     }
 
     // 以下两个方法当前没有任何调用点（IDE 的 Unused 检查会报）：敌人与敌方弹体都改由
@@ -2128,7 +2169,7 @@ public final class GameRenderer {
         drawHealthBar(g, player);
 
         g.setFill(Color.web("#8dc4ff"));
-        g.fillText("攻击", HUD_X + 14, HUD_Y + 46);
+        g.fillText("Q 技能", HUD_X + 14, HUD_Y + 46);
         int chargeSlots = player.getMaxAttackCharges();
         double cellWidth = Math.min(16.5, HUD_VALUE_WIDTH / Math.max(1, chargeSlots) - 2.5);
         double cellGap = 2.5;
@@ -2142,7 +2183,7 @@ public final class GameRenderer {
         }
 
         g.setFill(Color.web("#fdf6e9"));
-        g.fillText(player.isShiftSlowed() ? "减速" : player.getPhaseEnergy() >= GameConfig.PHASE_ENERGY_MAX ? "强化" : "切界", HUD_X + 14, HUD_Y + 66);
+        g.fillText("R 相位", HUD_X + 14, HUD_Y + 66);
         double phaseY = HUD_Y + 54;
         g.setFill(Color.rgb(255, 255, 255, 0.12));
         g.fillRoundRect(HUD_VALUE_X, phaseY, HUD_VALUE_WIDTH, 14, 7, 7);
@@ -2154,6 +2195,10 @@ public final class GameRenderer {
             g.setStroke(Color.web("#fff4bc")); g.setLineWidth(1.4);
             g.strokeRoundRect(HUD_VALUE_X - 1.5, phaseY - 1.5, HUD_VALUE_WIDTH + 3, 17, 9, 9);
         }
+        g.setFont(Font.font("Consolas", 11));
+        g.setFill(Color.web("#fdf6e9"));
+        g.fillText(player.getSkillEnergy() + "/" + player.getMaxSkillEnergy(), HUD_VALUE_X + HUD_VALUE_WIDTH + 5, HUD_Y + 44);
+        g.fillText((int) player.getPhaseEnergy() + "/100", HUD_VALUE_X + HUD_VALUE_WIDTH + 5, HUD_Y + 66);
 
         // 底行缩写成「光残敌 / 影残敌」：字数少了才放得下，盾量接在金币后面同一行。
         // 盾量取整：护盾是临时生命值，小数（12.3）在这里只会占位置、读不出额外信息。
@@ -2171,7 +2216,11 @@ public final class GameRenderer {
         // 两个面板各说一半，玩家才分得清哪一份是自己带的、哪一份是捡来的。
         g.setFill(Color.web("#a99bb2"));
         g.setFont(Font.font("Microsoft YaHei UI", 12));
-        g.fillText("基础攻击 " + Player.BASE_ATTACK_DAMAGE + "　·　加成见装备栏", HUD_X + 14, HUD_Y + 114);
+        String skillStatus = session.getAbilities().skillCooldown() > 0
+                ? String.format("%.1fs", session.getAbilities().skillCooldown()) : "6 蓝";
+        String finisherStatus = session.getAbilities().finisherCooldown() > 0
+                ? String.format("%.0fs", session.getAbilities().finisherCooldown()) : "100 相位";
+        g.fillText("Q " + skillStatus + "　R " + finisherStatus + "　Tab 切界", HUD_X + 14, HUD_Y + 114);
 
         drawWorldBadge(g, domain, light);
         drawEquipmentBar(g, session);
@@ -2235,7 +2284,7 @@ public final class GameRenderer {
         g.setTextAlign(TextAlignment.CENTER);
         g.setFill(light ? Color.rgb(237, 210, 156, 0.56) : Color.rgb(198, 169, 230, 0.58));
         g.setFont(Font.font("Microsoft YaHei UI", 13));
-        g.fillText("WASD / 方向键移动    ·    鼠标瞄准 / 左键攻击    ·    空格 闪避冲刺    ·    E 交互 / 换装    ·    1-3 丢弃装备    ·    TAB 穿梭双界    ·    ESC 取消 / 暂停",
+        g.fillText("WASD 移动 · 左键普攻 · Q 技能 · R 终结技 · 空格闪避 · Tab 切界 · Shift+Tab 强化切界 · E 交互 · 1-3 丢装备 · Esc 暂停",
                 AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT - 24.0);
         g.setTextAlign(TextAlignment.LEFT);
     }
