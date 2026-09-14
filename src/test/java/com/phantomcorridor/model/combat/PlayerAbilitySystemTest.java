@@ -90,15 +90,15 @@ class PlayerAbilitySystemTest {
         assertEquals(0, abilities.skillCooldown());
     }
 
-    @Test void finisherNeedsFullPhaseAndCooldownAndDoesNotRefundScorchEnergy() {
+    @Test void finisherNeedsEightyPhaseAndCooldownAndDoesNotRefundScorchEnergy() {
         for (WorldType world : WorldType.values()) {
             Player player = new Player(400, 300);
             if (world == WorldType.SHADOW) player.toggleWorld();
             var abilities = new PlayerAbilitySystem(); var enemies = new EnemySystem(); var nav = navigation();
             assertFalse(abilities.tryCast(player, true, 600, 300, nav));
-            player.restorePhaseEnergy(99);
+            player.restorePhaseEnergy(79);
             assertFalse(abilities.tryCast(player, true, 600, 300, nav));
-            assertEquals(99, player.getPhaseEnergy());
+            assertEquals(79, player.getPhaseEnergy());
             player.restorePhaseEnergy(1);
             Enemy target = target(enemies, 550, 300);
             target.addScorch(); target.addScorch(); target.addScorch();
@@ -130,7 +130,7 @@ class PlayerAbilitySystemTest {
             abilities.update(0.5, player, enemies, nav);
             assertEquals(target.getMaxHp(), target.getHp());
             assertTrue(abilities.finisherCooldown() > 29);
-            assertEquals(0, player.getPhaseEnergy());
+            assertEquals(20, player.getPhaseEnergy());
         }
     }
 

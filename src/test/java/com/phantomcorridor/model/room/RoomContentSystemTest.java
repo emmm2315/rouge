@@ -67,12 +67,12 @@ class RoomContentSystemTest {
         int price = RoomContentSystem.priceOf(offer);
         player.addCoins(price);
 
-        // 第一次按 E 只是选中：不扣钱、不装备、提示变成确认。
+        // 第一次按 F 只是选中：不扣钱、不装备、提示变成确认。
         assertEquals(RoomContentSystem.Outcome.HANDLED, content.interact(shop, player));
         assertTrue(content.isOfferSelected(offer));
         assertEquals(price, player.getCoins());
         assertTrue(player.getEquipment().isEmpty());
-        assertTrue(content.prompt(shop, player).startsWith("E  确认购买"), content.prompt(shop, player));
+        assertTrue(content.prompt(shop, player).startsWith("F  确认购买"), content.prompt(shop, player));
 
         // 走出范围：选择自动取消。
         player.setPosition(offer.x() + GameConfig.SHOP_CONFIRM_RESET_RADIUS + 30, offer.y());
@@ -81,12 +81,12 @@ class RoomContentSystemTest {
 
         // 再走回来是重新“购买”，而不是直接停在确认。
         player.setPosition(offer.x(), offer.y());
-        assertEquals("E  购买 " + offer.displayName() + " " + price + " 金币", content.prompt(shop, player));
+        assertEquals("F  购买 " + offer.displayName() + " " + price + " 金币", content.prompt(shop, player));
         content.interact(shop, player);
         assertTrue(content.isOfferSelected(offer));
         assertEquals(price, player.getCoins(), "选中不算购买");
 
-        // 第二次按 E 才真正成交。
+        // 第二次按 F 才真正成交。
         content.interact(shop, player);
         assertEquals(0, player.getCoins());
         assertFalse(player.getEquipment().isEmpty(), "购买后应当装备上");
@@ -144,7 +144,7 @@ class RoomContentSystemTest {
 
         assertTrue(battle.hasUnopenedChest());
         assertTrue(battle.hasRemainingLoot(), "没开的宝箱算作房间还有东西可拿");
-        assertEquals("E  打开宝箱", content.prompt(battle, player));
+        assertEquals("F  打开宝箱", content.prompt(battle, player));
 
         content.interact(battle, player);
 
@@ -179,7 +179,7 @@ class RoomContentSystemTest {
         content.reset(5L, 1);
         room.loot().addPickup(new Pickup(Pickup.Type.HEALTH, 610, 480, 2));
 
-        assertEquals("E  拾取 生命恢复药剂", content.prompt(room, player));
+        assertEquals("F  拾取 生命恢复药剂", content.prompt(room, player));
         assertEquals(new Pickup(Pickup.Type.HEALTH, 610, 480, 2), content.currentTarget(room, player));
 
         // 走出交互半径：提示与名称标签目标一起消失。
@@ -216,7 +216,7 @@ class RoomContentSystemTest {
         Pickup equipment = new Pickup(Pickup.Type.EQUIPMENT, 610, 480, 1);
         room.loot().addPickup(equipment);
 
-        assertEquals("E  装备 " + equipment.displayName(), content.prompt(room, player));
+        assertEquals("F  装备 " + equipment.displayName(), content.prompt(room, player));
     }
 
     @Test
@@ -245,7 +245,7 @@ class RoomContentSystemTest {
         Pickup offer = nearestOffer(shop, player);
         int price = RoomContentSystem.priceOf(offer);
 
-        assertEquals("E  购买 " + offer.displayName() + " " + price + " 金币", content.prompt(shop, player));
+        assertEquals("F  购买 " + offer.displayName() + " " + price + " 金币", content.prompt(shop, player));
     }
 
     @Test
@@ -291,15 +291,15 @@ class RoomContentSystemTest {
         assertEquals(RoomContentSystem.Outcome.NONE, content.interact(room, player, false),
                 "非主动交互（每帧自动路径）不能把刚关掉的面板重新弹出来");
         assertNull(content.pendingEquipment());
-        // 但提示仍然要写明“再按 E 就能重新考虑”，否则玩家会以为这件装备再也拿不了。
-        assertTrue(content.prompt(room, player).startsWith("E  换装"), content.prompt(room, player));
+        // 但提示仍然要写明“再按 F 就能重新考虑”，否则玩家会以为这件装备再也拿不了。
+        assertTrue(content.prompt(room, player).startsWith("F  换装"), content.prompt(room, player));
 
         // 走开一段时间再回来：玩家不按键就不会自动弹面板。
         player.setPosition(incoming.x() + GameConfig.INTERACT_RADIUS + 60, incoming.y());
         assertEquals("", content.prompt(room, player), "走远之后也够不着，没有提示");
         player.setPosition(incoming.x(), incoming.y());
         assertEquals(RoomContentSystem.Outcome.NONE, content.interact(room, player, false));
-        assertTrue(content.prompt(room, player).startsWith("E  换装"),
+        assertTrue(content.prompt(room, player).startsWith("F  换装"),
                 "回到装备旁边只是重新显示提示，不自动弹面板：" + content.prompt(room, player));
     }
 
@@ -317,9 +317,9 @@ class RoomContentSystemTest {
         assertTrue(content.resolveEquipmentSelection(room, player, -1));
         assertTrue(content.isDismissed(incoming, player));
 
-        // 玩家主动再按一次 E：解除“已放弃”，重新进入替换选择。
+        // 玩家主动再按一次 F：解除“已放弃”，重新进入替换选择。
         assertEquals(RoomContentSystem.Outcome.EQUIPMENT_SELECTION, content.interact(room, player),
-                "再按一次 E 应当允许重新考虑");
+                "再按一次 F 应当允许重新考虑");
         assertFalse(content.isDismissed(incoming, player));
         assertSame(incoming, content.pendingEquipment());
         assertEquals(3, player.getEquipment().size(), "重新进入选择时装备栏也不该变化");
@@ -368,7 +368,7 @@ class RoomContentSystemTest {
         player.addCoins(price + 5);
 
         content.interact(shop, player);   // 选中
-        assertEquals("E  确认购买 " + price + " 金币（装备栏已满，需选择替换）", content.prompt(shop, player),
+        assertEquals("F  确认购买 " + price + " 金币（装备栏已满，需选择替换）", content.prompt(shop, player),
                 "选中阶段就要说明满栏，玩家才知道按下去会弹替换面板");
 
         assertEquals(RoomContentSystem.Outcome.EQUIPMENT_SELECTION, content.interact(shop, player));
@@ -392,11 +392,11 @@ class RoomContentSystemTest {
         // 掉在商店里的装备不是商品：没有价签，捡回来也不该再花钱。
         assertEquals(-1, RoomContentSystem.priceOf(dropped), "玩家丢下的装备不能变成商品");
         assertFalse(dropped.shopGoods());
-        assertEquals("E  换装 " + replaced.displayName() + "（装备栏已满，需选择替换）",
+        assertEquals("F  换装 " + replaced.displayName() + "（装备栏已满，需选择替换）",
                 content.prompt(shop, player),
                 "被替换下来的装备离玩家最近，提示应当是“换装”而不是带价签的购买");
 
-        // 腾出一格再走回去捡：按 E 直接上身，金币一分不动。
+        // 腾出一格再走回去捡：按 F 直接上身，金币一分不动。
         player.removeEquipment(1);
         player.setPosition(dropped.x(), dropped.y());
         assertEquals(RoomContentSystem.Outcome.HANDLED, content.interact(shop, player));
@@ -444,7 +444,7 @@ class RoomContentSystemTest {
         RoomContentSystem content = new RoomContentSystem();
         content.reset(1L, 1);
 
-        // 战斗中按 E：装备留在原地，不弹换装面板。
+        // 战斗中按 F：装备留在原地，不弹换装面板。
         assertEquals(RoomContentSystem.Outcome.NONE, content.interact(room, player, true, true));
         assertNull(content.pendingEquipment());
         assertEquals(3, player.getEquipment().size());
@@ -474,7 +474,7 @@ class RoomContentSystemTest {
         content.reset(1L, 1);
 
         // 金币、药剂这些不涉及装备栏的东西不受战斗限制，否则清怪路上捡不了钱。
-        assertEquals("E  拾取 金币", content.prompt(room, player, true), "非装备拾取的提示不受战斗影响");
+        assertEquals("F  拾取 金币", content.prompt(room, player, true), "非装备拾取的提示不受战斗影响");
         assertEquals(RoomContentSystem.Outcome.HANDLED, content.interact(room, player, true, true));
         assertEquals(7, player.getCoins());
         assertFalse(room.loot().pickups().contains(coins));
@@ -499,7 +499,7 @@ class RoomContentSystemTest {
         assertTrue(shop.loot().pickups().contains(offer), "商品还在货架上");
         assertEquals("战斗中无法换装", content.prompt(shop, player, true));
 
-        // 清完怪再按一次 E：照常进入替换选择并成交。
+        // 清完怪再按一次 F：照常进入替换选择并成交。
         assertEquals(RoomContentSystem.Outcome.EQUIPMENT_SELECTION, content.interact(shop, player, true, false));
         assertTrue(content.resolveEquipmentSelection(shop, player, 0));
         assertEquals(5, player.getCoins());
@@ -542,7 +542,7 @@ class RoomContentSystemTest {
 
         content.interact(room, player);
         assertEquals(RoomContentSystem.Outcome.EQUIPMENT_SELECTION, content.interact(room, player),
-                "面板打开时再按 E 不应当重复入队");
+                "面板打开时再按 F 不应当重复入队");
         assertFalse(content.resolveEquipmentSelection(room, player, 3), "越界槽位不能替换");
         assertSame(incoming, content.pendingEquipment(), "非法输入后面板保持打开");
 

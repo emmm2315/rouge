@@ -242,15 +242,18 @@ class WeaponAttackProfileTest {
     // ---- 通用规则 ----
 
     @Test
-    void weaponsReplaceTheAttackPlanInsteadOfStackingDamageBonuses() {
-        // 设计文档 §三：「特效武器不再附带原武器的加成」「不能同时得到三叉杖与贯日长杖的能力」。
+    void multipleAttackWeaponsRunTogetherWithoutStackingDamageBonuses() {
+        // 当前设计：改变攻击方式的装备按稳定优先级同时启动；它们不再额外叠加百分比伤害。
         Player player = lightPlayer(EquipmentType.PRISM_FAN_WAND, EquipmentType.SUNLANCE);
         PlayerAttackSystem attacks = new PlayerAttackSystem();
         attacks.tryAttack(player, 200.0, 100.0);
 
-        // 只按优先级启用一件：长杖优先，所以是 1 发穿透光矛，而不是 3 发散射。
-        assertEquals(1, attacks.getProjectiles().size());
-        assertEquals(Projectile.Behaviour.PIERCE, attacks.getProjectiles().getFirst().getBehaviour());
+        // 三叉杖的三发散射与贯日长杖的一发穿透同时出现。
+        assertEquals(4, attacks.getProjectiles().size());
+        assertEquals(1, attacks.getProjectiles().stream()
+                .filter(projectile -> projectile.getBehaviour() == Projectile.Behaviour.PIERCE).count());
+        assertEquals(3, attacks.getProjectiles().stream()
+                .filter(projectile -> projectile.getBehaviour() == Projectile.Behaviour.VANILLA).count());
         assertEquals(0.0, player.getEquipmentDamageBonus(), EPS,
                 "改变攻击方式的武器不再额外贡献百分比伤害加成");
     }
