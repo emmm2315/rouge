@@ -22,6 +22,10 @@ import java.util.List;
  * 所以暂停时自然冻结（见需求文档「暂停不推进特效或冷却」）。
  */
 public final class PlayerAttackSystem {
+    /** 同一轮攻击中每一件影界武器对应的一次近战窗口。 */
+    public record MeleeStrike(double x, double y, double angleRadians, double arcDegrees, double range,
+                              double coefficient, int attackId, double visualTime) { }
+
     private final List<Projectile> projectiles = new ArrayList<>();
     private double cooldownRemaining;
     private double meleeVisibleRemaining;
@@ -38,9 +42,29 @@ public final class PlayerAttackSystem {
     private int meleeReleaseCount;
     /** 当前这一刀（或复斩）的伤害系数。 */
     private double meleeCoefficient = 1.0;
+    private final List<MeleeWindow> meleeWindows = new ArrayList<>();
+
+    private static final class MeleeWindow {
+        final double x, y, angleRadians, arcDegrees, range, coefficient;
+        final java.util.Set<Object> hitTargets = new java.util.HashSet<>();
+        final int attackId;
+        double remaining;
+        MeleeWindow(double x, double y, double angleRadians, double arcDegrees, double range,
+                    double coefficient, int attackId) {
+            this.x = x;
+            this.y = y;
+            this.angleRadians = angleRadians;
+            this.arcDegrees = arcDegrees;
+            this.range = range;
+            this.coefficient = coefficient;
+            this.attackId = attackId;
+            this.remaining = GameConfig.SHADOW_MELEE_VISIBLE_TIME;
+        }
+    }
 
     /** 当前生效的攻击方案；没有武器改变攻击方式时为基础方案。 */
     private AttackProfile currentProfile = AttackProfile.baseLight();
+    private List<AttackProfile> currentProfiles = List.of(currentProfile);
 
     /**
      * 一件「稍后才会发生」的攻击：重剑的前摇、蚀界仪的复斩与第二颗光弹都用它。
@@ -87,10 +111,14 @@ public final class PlayerAttackSystem {
         meleeVisibleRemaining = 0.0;
         meleeAngleRadians = 0.0;
         meleeAttackId = 0;
+        worldAttackCount = 0;
+        meleeReleaseCount = 0;
         meleeArcDegrees = GameConfig.SHADOW_MELEE_ARC_DEGREES;
         meleeRange = GameConfig.SHADOW_MELEE_RANGE;
         meleeCoefficient = 1.0;
+        meleeWindows.clear();
         currentProfile = AttackProfile.baseLight();
+        currentProfiles = List.of(currentProfile);
     }
 
     public void update(double dt) {
@@ -100,6 +128,8 @@ public final class PlayerAttackSystem {
     public void update(double dt, RoomNavigationSystem navigation) {
         cooldownRemaining = Math.max(0.0, cooldownRemaining - dt);
         meleeVisibleRemaining = Math.max(0.0, meleeVisibleRemaining - dt);
+        for (MeleeWindow window : meleeWindows) window.remaining = Math.max(0.0, window.remaining - Math.max(0.0, dt));
+        meleeWindows.removeIf(window -> window.remaining <= 0.0);
         projectiles.forEach(projectile -> {
             double oldX = projectile.getX();
             double oldY = projectile.getY();
@@ -138,7 +168,7 @@ public final class PlayerAttackSystem {
         pending.removeAll(due);
         for (PendingAttack attack : due) {
             if (attack.kind == PendingKind.MELEE) {
-                openMelee(attack.profile, attack.directionX, attack.directionY);
+                openMelee(attack.profile, attack.originX, attack.originY, attack.directionX, attack.directionY);
             } else {
                 spawnPellets(attack.profile, attack.originX, attack.originY,
                         attack.directionX, attack.directionY, attack.pelletIndex, 1);
@@ -155,17 +185,15 @@ public final class PlayerAttackSystem {
     public void clearTransientAttacks() {
         projectiles.clear();
         pending.clear();
+        meleeWindows.clear();
         meleeVisibleRemaining = 0.0;
         // 余震指环的计数在切界/离房时清零：设计文档明确「不能反复穿戴预存强化」。
         worldAttackCount = 0;
     }
 
     /**
-     * 同界同时带多件改变攻击方式的武器时，按这张固定优先级取一件。
-     *
-     * <p>设计文档 §三 明确「特效武器不再附带原武器的加成……不能同时得到三叉杖与贯日长杖的能力」，
-     * 但没规定同时带两把时听谁的。这里给一份确定、可预期的顺序（越靠前越优先）：
-     * 先按武器形态的“专精程度”，同档再按枚举声明顺序，保证同一次装备组合每次结果一致。
+     * 攻击方式的稳定顺序。它不再用于“只选一件”，而是用于确定多件装备同时出手时的
+     * 视觉/命中顺序；越靠前的方案越先生成。
      */
     private static final List<EquipmentType> WEAPON_PRIORITY = List.of(
             EquipmentType.SUNLANCE,
@@ -177,17 +205,30 @@ public final class PlayerAttackSystem {
             EquipmentType.CRESCENT_REAPER,
             EquipmentType.ECLIPSE_RELAY);
 
-    /** 当前世界下真正生效的那件武器；没有则返回 {@code null}（用基础攻击）。 */
+    /** 当前世界下真正生效的第一件武器；没有则返回 {@code null}（兼容旧调用方）。 */
     public static EquipmentType activeWeapon(Player player) {
+        return activeWeapons(player).stream().findFirst().orElse(null);
+    }
+
+    /**
+     * 当前世界下所有改变攻击方式的装备，按稳定优先级返回。
+     * 同名装备也会保留多次，意味着玩家可以叠加两套相同攻击方式。
+     */
+    public static List<EquipmentType> activeWeapons(Player player) {
         WorldType world = player.getCurrentWorld();
+        List<EquipmentType> result = new ArrayList<>();
         for (EquipmentType weapon : WEAPON_PRIORITY) {
-            if (player.hasEquipment(weapon) && AttackProfile.changesAttack(weapon, world)) return weapon;
+            for (EquipmentType equipped : player.getEquipment()) {
+                if (equipped == weapon && AttackProfile.changesAttack(weapon, world)) result.add(weapon);
+            }
         }
-        return null;
+        return Collections.unmodifiableList(result);
     }
 
     /** 一次成功启动的攻击所采用的方案（供测试与渲染查询）。 */
     public AttackProfile getCurrentProfile() { return currentProfile; }
+    /** 本轮同时启用的全部攻击方案（第一项与旧 getCurrentProfile 保持一致）。 */
+    public List<AttackProfile> getCurrentProfiles() { return currentProfiles; }
 
     /** 归影双刃的攻击方案：往返影刃，间隔 max(1.25, 0.50 秒)。 */
     private static AttackProfile returningFang() {
@@ -198,57 +239,73 @@ public final class PlayerAttackSystem {
     }
 
     public boolean tryAttack(Player player, double targetX, double targetY) {
-        if (player.getHp() <= 0 || player.isDashing() || cooldownRemaining > 0.0) {
+        if (player.getHp() <= 0 || player.isCastingAbility() || player.isDashing() || cooldownRemaining > 0.0) {
             return false;
         }
         double[] aim = aimDirection(player, targetX, targetY);
         double unitX = aim[0];
         double unitY = aim[1];
         WorldType world = player.getCurrentWorld();
-        EquipmentType weapon = activeWeapon(player);
-        AttackProfile profile;
-        if (weapon == EquipmentType.RETURNING_FANG && world == WorldType.SHADOW) {
-            // 归影双刃不是近战扇形，而是一枚往返影刃，所以它不走 AttackProfile.forWeapon 的开关表。
-            profile = returningFang();
-        } else if (weapon == null) {
-            profile = world == WorldType.LIGHT ? AttackProfile.baseLight() : AttackProfile.baseShadow();
-        } else {
-            profile = AttackProfile.forWeapon(weapon, world);
+        List<EquipmentType> weapons = activeWeapons(player);
+        if (weapons.isEmpty()) weapons = Collections.singletonList(null);
+        List<AttackProfile> profiles = new ArrayList<>();
+        List<EquipmentType> resolvedWeapons = new ArrayList<>();
+        for (EquipmentType weapon : weapons) {
+            AttackProfile profile = weapon == EquipmentType.RETURNING_FANG && world == WorldType.SHADOW
+                    ? returningFang() : weapon == null
+                    ? (world == WorldType.LIGHT ? AttackProfile.baseLight() : AttackProfile.baseShadow())
+                    : AttackProfile.forWeapon(weapon, world);
+            if (profile != null) {
+                // 晨曦法杖不是“改变攻击方式”的武器：没有其它形态武器时，
+                // 它只给基础光弹增加速度。同名装备按件数叠加；专属武器的速度
+                // 仍以各自方案为准，避免把法杖加成错误地套到长杖/光核上。
+                if (weapon == null && world == WorldType.LIGHT) {
+                    profile = profile.withSpeedScale(player.lightProjectileSpeedMultiplier());
+                }
+                profiles.add(profile);
+                resolvedWeapons.add(weapon);
+            }
         }
-        if (profile == null) return false;
+        if (profiles.isEmpty()) return false;
+        AttackProfile profile = profiles.getFirst();
         currentProfile = profile;
+        currentProfiles = List.copyOf(profiles);
 
-        if (!player.consumeAttackCharge()) return false;
-        player.startAttackAnimation(unitX, unitY, profile.windup());
+        // Basic attacks are the sustainable fallback; the blue resource is reserved for skills.
+        double maxWindup = profiles.stream().mapToDouble(AttackProfile::windup).max().orElse(0.0);
+        player.startAttackAnimation(unitX, unitY, maxWindup);
         // 计数只在**真的启动了一轮攻击**之后才推进：蓝条不够、没有可用方案时不算一轮，
         // 否则余震指环会被空按刷出来。
         worldAttackCount++;
         meleeAngleRadians = Math.atan2(unitY, unitX);
-        if (profile.world() == WorldType.SHADOW && !profile.hasWindup()) {
+        if (profiles.stream().anyMatch(p -> p.world() == WorldType.SHADOW && !p.hasWindup())) {
             // 夜行披风：影界攻击「实际释放」时给短时加速。重剑有前摇，所以延迟到
             // openMelee 那一刻才触发（见 advancePending），前摇本身不给加速。
             player.onShadowAttackReleased();
         }
 
-        if (profile.shape() == AttackProfile.ProjectileShape.FANG && profile.world() == WorldType.SHADOW
-                && profile.pellets() == 1 && profile.meleeArcDegrees() == 0.0) {
-            spawnReturningFang(player, unitX, unitY);
-        } else if (profile.world() == WorldType.LIGHT) {
-            spawnPellets(profile, player.getX(), player.getY(), unitX, unitY, 0, profile.pellets());
-        } else {
-            if (profile.hasWindup()) {
-                schedule(PendingKind.MELEE, profile.windup(), profile,
-                        player.getX(), player.getY(), unitX, unitY, 0);
+        for (int i = 0; i < profiles.size(); i++) {
+            AttackProfile selected = profiles.get(i);
+            EquipmentType weapon = resolvedWeapons.get(i);
+            if (weapon == EquipmentType.RETURNING_FANG && world == WorldType.SHADOW) {
+                spawnReturningFang(player, unitX, unitY);
+            } else if (selected.world() == WorldType.LIGHT) {
+                spawnPellets(selected, player.getX(), player.getY(), unitX, unitY, 0, selected.pellets());
             } else {
-                openMelee(profile, unitX, unitY);
-            }
-            // 蚀界仪在影界：先斩 0.75，再在 0.22 秒后原方向复斩 0.45。
-            if (profile.pelletInterval() > 0.0) {
-                schedule(PendingKind.MELEE, 0.22, AttackProfile.eclipseRelayReslash(),
-                        player.getX(), player.getY(), unitX, unitY, 1);
+                if (selected.hasWindup()) {
+                    schedule(PendingKind.MELEE, selected.windup(), selected,
+                            player.getX(), player.getY(), unitX, unitY, 0);
+                } else {
+                    openMelee(selected, player.getX(), player.getY(), unitX, unitY);
+                }
+                // 蚀界仪在影界：先斩 0.75，再在 0.22 秒后原方向复斩 0.45。
+                if (selected.pelletInterval() > 0.0) {
+                    schedule(PendingKind.MELEE, selected.pelletInterval(), AttackProfile.eclipseRelayReslash(),
+                            player.getX(), player.getY(), unitX, unitY, 1);
+                }
             }
         }
-        cooldownRemaining = cooldownFor(player, profile);
+        cooldownRemaining = profiles.stream().mapToDouble(p -> cooldownFor(player, p)).max().orElse(0.0);
         return true;
     }
 
@@ -371,6 +428,9 @@ public final class PlayerAttackSystem {
         }
         if (projectile.getBehaviour() == Projectile.Behaviour.BURST) {
             projectile.setEffectRadius(GameConfig.SOLAR_BURST_RADIUS);
+            // 光核的接触伤害是系数 0（damageCoefficients[0]），真正的伤害在爆炸那一份
+            // （damageCoefficients[1]）。爆炸结算读的是这个字段，而不是接触伤害系数。
+            projectile.setBurstCoefficient(profile.coefficient(1));
         }
     }
 
@@ -386,7 +446,7 @@ public final class PlayerAttackSystem {
      * <p>这也是「影界攻击实际释放」的时刻——夜行披风的加速在这里触发，
      * 所以重剑的 0.18 秒前摇期间不会提前给到加速（设计文档 §五-10）。
      */
-    private void openMelee(AttackProfile profile, double unitX, double unitY) {
+    private void openMelee(AttackProfile profile, double x, double y, double unitX, double unitY) {
         meleeVisibleRemaining = GameConfig.SHADOW_MELEE_VISIBLE_TIME;
         meleeAngleRadians = Math.atan2(unitY, unitX);
         meleeArcDegrees = profile.meleeArcDegrees();
@@ -396,6 +456,8 @@ public final class PlayerAttackSystem {
         meleeCoefficient = profile.coefficient(0);
         meleeAttackId++;
         meleeReleaseCount++;
+        meleeWindows.add(new MeleeWindow(x, y, meleeAngleRadians, meleeArcDegrees, meleeRange,
+                meleeCoefficient, meleeAttackId));
     }
 
     /** 当前影斩的扇形角度（度）。 */
@@ -422,9 +484,32 @@ public final class PlayerAttackSystem {
     /** 还没结算的延迟攻击数量（测试用来确认切界/离房真的清干净了）。 */
     public int getPendingCount() { return pending.size(); }
 
-    public boolean isMeleeVisible() { return meleeVisibleRemaining > 0.0; }
-    public double getMeleeVisualTime() { return GameConfig.SHADOW_MELEE_VISIBLE_TIME - meleeVisibleRemaining; }
+    public boolean isMeleeVisible() { return !meleeWindows.isEmpty() || meleeVisibleRemaining > 0.0; }
+    public double getMeleeVisualTime() {
+        if (!meleeWindows.isEmpty()) {
+            return GameConfig.SHADOW_MELEE_VISIBLE_TIME - meleeWindows.get(meleeWindows.size() - 1).remaining;
+        }
+        return GameConfig.SHADOW_MELEE_VISIBLE_TIME - meleeVisibleRemaining;
+    }
     public double getMeleeAngleRadians() { return meleeAngleRadians; }
     public int getMeleeAttackId() { return meleeAttackId; }
+    /** 返回当前所有仍在显示/结算的影界近战窗口，供命中与渲染同时支持多种武器。 */
+    public List<MeleeStrike> getMeleeStrikes() {
+        List<MeleeStrike> result = new ArrayList<>(meleeWindows.size());
+        for (MeleeWindow window : meleeWindows) {
+            result.add(new MeleeStrike(window.x, window.y, window.angleRadians, window.arcDegrees, window.range,
+                    window.coefficient, window.attackId,
+                    GameConfig.SHADOW_MELEE_VISIBLE_TIME - window.remaining));
+        }
+        return Collections.unmodifiableList(result);
+    }
     public double getCooldownRemaining() { return cooldownRemaining; }
+
+    /** 命中记录随窗口释放；多个同时存在的窗口不能覆盖彼此的记录。 */
+    public boolean registerMeleeHit(int attackId, Object target) {
+        for (MeleeWindow window : meleeWindows) {
+            if (window.attackId == attackId) return window.hitTargets.add(target);
+        }
+        return false;
+    }
 }

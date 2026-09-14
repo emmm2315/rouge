@@ -19,7 +19,7 @@ public final class LoginController {
         this.view.setNickname(profile.getNickname());
     }
 
-    private void submit(String nickname, String password) {
+    private void submit(String nickname) {
         String normalized = PlayerProfile.normalizeNickname(nickname);
         if (normalized.isEmpty()) {
             view.showError("请输入旅者昵称");
@@ -34,15 +34,12 @@ public final class LoginController {
                 view.showError("本地档案昵称不匹配");
                 return;
             }
-            if (!profile.passwordMatches(password)) {
-                view.showError("本地密码错误");
-                return;
-            }
             view.clearError();
             onLoggedIn.run();
             return;
         }
-        profile.updateCredentials(normalized, password);
+        // 登录只使用昵称；清空旧式密码摘要，避免历史凭据继续影响新建档案。
+        profile.updateCredentials(normalized, "");
         profile.saveLocal();
         view.clearError();
         onLoggedIn.run();

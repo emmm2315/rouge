@@ -114,6 +114,8 @@ public final class EnemySystem {
     public boolean isBetweenWaves() { return waveDelay >= 0.0; }
 
     private int killsSinceLastRead;
+    /** 最近一批非召唤敌人击杀对应的相位能量奖励。 */
+    private int phaseEnergySinceLastRead;
     private int summonCallsSinceLastRead;
     private int phaseTransitionsSinceLastRead;
     private int floor = 1;
@@ -140,6 +142,7 @@ public final class EnemySystem {
         consumedHitIds.clear();
         activeRoomId = -1;
         killsSinceLastRead = 0;
+        phaseEnergySinceLastRead = 0;
         summonCallsSinceLastRead = 0;
         phaseTransitionsSinceLastRead = 0;
         blinkFlash = null;
@@ -272,7 +275,10 @@ public final class EnemySystem {
                 visualEffects.add(EnemyVisualEffect.body(enemy.getKind(), enemy.getWorld(), "death", enemy.getFacing(),
                         enemy.getX(), enemy.getY(), displayWidth(enemy.getKind()), .70));
                 activeCasts.remove(enemy);
-                killsSinceLastRead++;
+                if (!enemy.isSummoned()) {
+                    killsSinceLastRead++;
+                    phaseEnergySinceLastRead += enemy.getKind().phaseEnergyReward();
+                }
                 bossFell |= enemy.isBoss();
                 iterator.remove();
                 continue;
@@ -327,6 +333,18 @@ public final class EnemySystem {
             collapseSummons();
             clearRootWalls();
             telegraphs.removeIf(telegraph -> telegraph.source().boss());
+        }
+        // 清空一波的最后一名敌人时，先撤销危险实体，再推进伤害与视觉。
+        // 最后一波与波次间隙使用同一规则，保留死亡动画和受击飘字。
+        if (enemies.isEmpty()) {
+            attacks.clear();
+            telegraphs.clear();
+            activeCasts.clear();
+            summonRifts.clear();
+            clearRootWalls();
+            consumedHitIds.clear();
+            blinkFlash = null;
+            visualEffects.removeIf(effect -> !effect.isBodyAnimation() || !"death".equals(effect.effectId()));
         }
         // 预警放在本体循环之后推进：释放当帧还能最后调整自己的判定范围
         // （甲虫顶撞撞墙提前停下时，警示带要跟着缩短，不能继续承诺一段走不到的直线）。
@@ -1118,22 +1136,24 @@ public final class EnemySystem {
             }
         }
 
-        // 近战：按本轮方案的扇形与距离判定，环月镰是 360°、重剑是 40° 窄劈。
+        // 近战：同一轮可以同时存在多件影界攻击方式（环斩、重劈、延迟复斩等），
+        // 每个窗口都有独立的扇形、距离、系数和命中 ID，不能再只取一件优先武器。
         if (player.getCurrentWorld() == WorldType.SHADOW && playerAttacks.isMeleeVisible()) {
-            int attackId = playerAttacks.getMeleeAttackId();
-            for (Enemy enemy : enemies) {
-                if (enemy.isDead()) continue;
-                if (!hasLineOfSight(player.getX(), player.getY(), enemy.getHitboxCenterX(),
-                        enemy.getHitboxCenterY(), WorldType.SHADOW)) continue;
-                if (enemy.getLastMeleeHitId() == attackId) continue;
-                if (!meleeCovers(player, playerAttacks, enemy)) continue;
-                int dealt = applyDamage(player, enemy, playerAttacks.getMeleeCoefficient(),
-                        player.getX(), player.getY());
-                if (dealt > 0) {
-                    enemy.setLastMeleeHitId(attackId);
-                    if (empowered) {
-                        empowered = false;
-                        spawnResonanceShockwave(player, player.getX(), player.getY(), true);
+            for (PlayerAttackSystem.MeleeStrike strike : playerAttacks.getMeleeStrikes()) {
+                for (Enemy enemy : enemies) {
+                    if (enemy.isDead()) continue;
+                    if (!hasLineOfSight(strike.x(), strike.y(), enemy.getHitboxCenterX(),
+                            enemy.getHitboxCenterY(), WorldType.SHADOW)) continue;
+                    if (!meleeCovers(player, strike, enemy)) continue;
+                    if (!playerAttacks.registerMeleeHit(strike.attackId(), enemy)) continue;
+                    int dealt = applyDamage(player, enemy, strike.coefficient(),
+                            strike.x(), strike.y());
+                    if (dealt > 0) {
+                        enemy.setLastMeleeHitId(strike.attackId());
+                        if (empowered) {
+                            empowered = false;
+                            spawnResonanceShockwave(player, player.getX(), player.getY(), true);
+                        }
                     }
                 }
             }
@@ -1168,7 +1188,7 @@ public final class EnemySystem {
     private void resolveProjectileHit(Player player, Projectile projectile, Enemy hit) {
         if (projectile.getBehaviour() == Projectile.Behaviour.BURST) {
             // 光核没有独立的接触伤害：直接命中的敌人也只吃一次爆炸。
-            explodeAt(player, projectile.getX(), projectile.getY(), projectile.getDamageCoefficient(),
+            explodeAt(player, projectile.getX(), projectile.getY(), projectile.getBurstCoefficient(),
                     GameConfig.SOLAR_BURST_RADIUS, projectile.getWorld());
             projectile.expire();
             return;
@@ -1216,18 +1236,18 @@ public final class EnemySystem {
     }
 
     /** 近战扇形判定：目标要在本轮距离内、且落在扇形角度里（360° 就是全天周）。 */
-    private static boolean meleeCovers(Player player, PlayerAttackSystem attacks, Enemy enemy) {
-        double dx = enemy.getHitboxCenterX() - player.getX();
-        double dy = enemy.getHitboxCenterY() - player.getY();
+    private static boolean meleeCovers(Player player, PlayerAttackSystem.MeleeStrike attacks, Enemy enemy) {
+        double dx = enemy.getHitboxCenterX() - attacks.x();
+        double dy = enemy.getHitboxCenterY() - attacks.y();
         double distance = Math.hypot(dx, dy);
-        if (distance > attacks.getMeleeRange() + enemy.getHitboxRadius()) return false;
-        double arc = attacks.getMeleeArcDegrees();
+        if (distance > attacks.range() + enemy.getHitboxRadius()) return false;
+        double arc = attacks.arcDegrees();
         if (arc >= 360.0) return true;
         if (distance < 0.0001) return true;
         double toEnemy = Math.atan2(dy, dx);
         double half = Math.toRadians(arc / 2.0);
-        double delta = Math.atan2(Math.sin(toEnemy - attacks.getMeleeAngleRadians()),
-                Math.cos(toEnemy - attacks.getMeleeAngleRadians()));
+        double delta = Math.atan2(Math.sin(toEnemy - attacks.angleRadians()),
+                Math.cos(toEnemy - attacks.angleRadians()));
         return Math.abs(delta) <= half;
     }
 
@@ -1242,6 +1262,10 @@ public final class EnemySystem {
      * 所以要先知道这一击是从哪个方向来的（弹体当前位置 / 玩家位置 / 爆心）。
      */
     private int applyDamage(Player player, Enemy enemy, double coefficient, double fromX, double fromY) {
+        return applyDamage(player, enemy, coefficient, fromX, fromY, true);
+    }
+
+    private int applyDamage(Player player, Enemy enemy, double coefficient, double fromX, double fromY, boolean gainPhase) {
         WorldType world = player.getCurrentWorld();
         int stacks = world == WorldType.SHADOW ? enemy.consumeScorch() : 0;
         if (world == WorldType.LIGHT) {
@@ -1249,7 +1273,7 @@ public final class EnemySystem {
         }
         coefficient *= enemy.getKind().affinity().damageMultiplier(world, stacks > 0);
         coefficient += stacks * GameConfig.SCORCH_DAMAGE_PER_STACK;
-        if (stacks > 0) player.restorePhaseEnergy(stacks * GameConfig.SCORCH_ENERGY_PER_STACK);
+        if (stacks > 0 && gainPhase) player.restorePhaseEnergy(stacks * GameConfig.SCORCH_ENERGY_PER_STACK);
         double raw = player.getCurrentBaseDamage()
                 * coefficient * player.damageMultiplier(player.getCurrentWorld())
                 * hunterBonus(player, enemy);
@@ -1257,6 +1281,15 @@ public final class EnemySystem {
         int dealt = enemy.takeHit(scaledPlayerDamage(raw));
         if (dealt > 0) recordEnemyHit(enemy, dealt);
         return dealt;
+    }
+
+    /** One cast resolves once per target, using real hurtboxes, affinity, armor and terrain. */
+    public void resolveAbility(Player player, PlayerAbilitySystem.Strike strike, RoomNavigationSystem navigation) {
+        for (Enemy enemy : enemies) {
+            if (enemy.isDead() || !strike.covers(enemy.getHitboxCenterX(), enemy.getHitboxCenterY(), enemy.getHitboxRadius())) continue;
+            if (!navigation.isSegmentClear(strike.x(), strike.y(), enemy.getHitboxCenterX(), enemy.getHitboxCenterY(), 1, strike.world())) continue;
+            applyDamage(player, enemy, strike.coefficient(), strike.x(), strike.y(), !strike.finisher());
+        }
     }
 
     /**
@@ -2258,6 +2291,11 @@ public final class EnemySystem {
     public boolean isRoomCleared() { return enemies.isEmpty() && currentWave >= totalWaves; }
     public int getCount(WorldType world) { return (int) enemies.stream().filter(enemy -> enemy.getWorld() == world).count(); }
     public int consumeKills() { int result = killsSinceLastRead; killsSinceLastRead = 0; return result; }
+    public int consumePhaseEnergyReward() {
+        int result = phaseEnergySinceLastRead;
+        phaseEnergySinceLastRead = 0;
+        return result;
+    }
 
     /**
      * 只投放一只指定物种的敌人，位置交给调用方设置。

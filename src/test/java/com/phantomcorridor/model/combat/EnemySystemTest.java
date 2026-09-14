@@ -347,6 +347,62 @@ class EnemySystemTest {
         assertFalse(sawFlash, "冷却期间不能闪现");
     }
 
+    @Test
+    void simultaneousMeleeWeaponsDamageEachTargetOnlyOncePerWindow() {
+        Room room = openRoom(8, RoomType.BOSS);
+        var navigation = navigationFor(room);
+        Player player = new Player(600, 400);
+        player.toggleWorld();
+        player.equip(com.phantomcorridor.model.EquipmentType.CRESCENT_REAPER);
+        player.equip(com.phantomcorridor.model.EquipmentType.CRESCENT_REAPER);
+        EnemySystem system = new EnemySystem();
+        Enemy enemy = system.spawnForTest(EnemyKind.WATCHER, WorldType.SHADOW, 5,
+                com.phantomcorridor.model.Difficulty.NORMAL);
+        enemy.setPosition(640, 400);
+        enemy.setAttackCooldown(999);
+        PlayerAttackSystem attacks = new PlayerAttackSystem();
+        attacks.tryAttack(player, 700, 400);
+        int before = enemy.getHp();
+        system.update(0, player, attacks, navigation);
+        int afterFirstFrame = enemy.getHp();
+        assertTrue(afterFirstFrame < before);
+        for (int frame = 0; frame < 4; frame++) {
+            attacks.update(DT);
+            system.update(DT, player, attacks, navigation);
+        }
+        assertEquals(afterFirstFrame, enemy.getHp(), "重叠的近战窗口不能逐帧重复扣血");
+    }
+
+    @Test
+    void clearingFinalEnemyRemovesItsReleasedBarrageButPreservesDeathAnimation() {
+        for (RoomType type : List.of(RoomType.BATTLE, RoomType.BOSS, RoomType.EVENT)) {
+            Room room = openRoom(8, type);
+            var navigation = navigationFor(room);
+            Player player = new Player(600, 400);
+            EnemySystem system = new EnemySystem();
+            Enemy enemy = system.spawnForTest(EnemyKind.LANTERN, WorldType.LIGHT, 1,
+                    com.phantomcorridor.model.Difficulty.NORMAL);
+            enemy.setPosition(950, 400);
+            var attacks = new PlayerAttackSystem();
+            for (int frame = 0; frame < 600 && system.getAttacks().isEmpty(); frame++) {
+                system.update(DT, player, attacks, navigation);
+            }
+            assertFalse(system.getAttacks().isEmpty(), type + " 测试前必须实际放出弹幕");
+            enemy.damage(enemy.getMaxHp());
+            double hp = player.getHp();
+            system.update(DT, player, attacks, navigation);
+            assertTrue(system.isRoomCleared());
+            assertTrue(system.getAttacks().isEmpty());
+            assertTrue(system.getTelegraphs().isEmpty());
+            assertTrue(system.getRootWalls().isEmpty());
+            assertFalse(system.getVisualEffects().isEmpty());
+            assertTrue(system.getVisualEffects().stream().allMatch(e -> "death".equals(e.effectId())));
+            for (int frame = 0; frame < 120; frame++) system.update(DT, player, attacks, navigation);
+            assertTrue(system.getVisualEffects().isEmpty(), "死亡动画仍应正常播放并结束");
+            assertEquals(hp, player.getHp(), 1e-9);
+        }
+    }
+
     /** 把玩家围在中间的小屋：内部放得下玩家，但首领从外面挤不进来。 */
     private static Room sealedBoxRoom() {
         return new Room(8, RoomType.BOSS, 0, 0, RoomShape.RECTANGLE,

@@ -21,6 +21,7 @@ public final class GameController {
     private boolean interactHeld;
     private boolean attackHeld;
     private boolean dashHeld;
+    private boolean skillHeld, skill2Held, finisherHeld, modifierHeld;
     private double aimX;
     private double aimY;
     private final Settings settings;
@@ -70,6 +71,7 @@ public final class GameController {
         interactHeld = false;
         attackHeld = false;
         dashHeld = false;
+        skillHeld = skill2Held = finisherHeld = modifierHeld = false;
         aimX = session.getPlayer().getX() + 1.0;
         aimY = session.getPlayer().getY();
         onSessionUpdated.accept(session);
@@ -93,6 +95,7 @@ public final class GameController {
         interactHeld = false;
         attackHeld = false;
         dashHeld = false;
+        skillHeld = skill2Held = finisherHeld = modifierHeld = false;
     }
 
     private void keyPressed(KeyCode key) {
@@ -126,17 +129,30 @@ public final class GameController {
             return;
         }
         switch (key) {
-            case W, UP -> input.setUp(true);
-            case S, DOWN -> input.setDown(true);
-            case A, LEFT -> input.setLeft(true);
-            case D, RIGHT -> input.setRight(true);
-            case TAB -> {
-                if (!shiftHeld && session.tryShiftWorld()) {
+            case SHIFT -> modifierHeld = true;
+            case CONTROL -> {
+                if (!shiftHeld && session.tryShiftWorld(modifierHeld)) {
                     view.playWorldShift(session.getPlayer().getCurrentWorld());
                 }
                 shiftHeld = true;
             }
+            case Q -> {
+                if (!skillHeld) session.tryUseAbility(false, aimX, aimY);
+                skillHeld = true;
+            }
             case E -> {
+                if (!skill2Held) session.tryUseSkill(1, aimX, aimY);
+                skill2Held = true;
+            }
+            case R -> {
+                if (!finisherHeld) session.tryUseAbility(true, aimX, aimY);
+                finisherHeld = true;
+            }
+            case W, UP -> input.setUp(true);
+            case S, DOWN -> input.setDown(true);
+            case A, LEFT -> input.setLeft(true);
+            case D, RIGHT -> input.setRight(true);
+            case F -> {
                 // 长按会连发 keyPressed：交互（尤其商店的二次确认）必须一次按下只算一次。
                 if (!interactHeld) session.requestInteract();
                 interactHeld = true;
@@ -157,12 +173,16 @@ public final class GameController {
 
     private void keyReleased(KeyCode key) {
         switch (key) {
+            case SHIFT -> modifierHeld = false;
+            case CONTROL -> shiftHeld = false;
+            case Q -> skillHeld = false;
+            case E -> skill2Held = false;
+            case R -> finisherHeld = false;
             case W, UP -> input.setUp(false);
             case S, DOWN -> input.setDown(false);
             case A, LEFT -> input.setLeft(false);
             case D, RIGHT -> input.setRight(false);
-            case TAB -> shiftHeld = false;
-            case E -> interactHeld = false;
+            case F -> interactHeld = false;
             case SPACE -> dashHeld = false;
             default -> { }
         }

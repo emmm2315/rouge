@@ -146,7 +146,7 @@ public final class GameRenderer {
     private static final double HUD_X = 20.0;
     private static final double HUD_Y = 18.0;
     private static final double HUD_WIDTH = 350.0;
-    private static final double HUD_HEIGHT = 130.0;
+    private static final double HUD_HEIGHT = 156.0;
     /** 数值列的起点与宽度：生命条、攻击格、相位条共用同一条基线，视觉上对齐。 */
     private static final double HUD_VALUE_X = 92.0;
     private static final double HUD_VALUE_WIDTH = 190.0;
@@ -186,11 +186,14 @@ public final class GameRenderer {
     private static final Image REWARD_ICONS = loadUiImage("reward_icons_v1.png");
     private static final Image WEAPON_ICONS = loadUiImage("weapons_v1.png");
     private static final Image EQUIPMENT_ICONS = loadUiImage("equipment_v1.png");
+    /** V3 主动技能与终结技图标（由角色模型资源的独立透明帧提供）。 */
+    private static final Map<String, Image> ABILITY_ICONS = loadAbilityIcons();
     /** 受击闪白用的"纯白剪影"缓存：按需生成，同一张贴图只算一次。 */
     private static final Map<Image, Image> WHITE_SILHOUETTES = new HashMap<>();
     private static final Map<String, Image> EQUIPMENT_ASSETS = loadEquipmentAssets();
     private static final Map<String, Image> MONSTER_IMAGES = new HashMap<>();
     private static final Map<String, Image[]> MONSTER_FRAME_SETS = new HashMap<>();
+    private static final Map<String, Image[]> PLAYER_VFX = new HashMap<>();
 
     public void render(GraphicsContext g, GameSession session, double fps) {
         g.setImageSmoothing(false);
@@ -213,6 +216,7 @@ public final class GameRenderer {
         // 拖尾垫在角色之下：残影只该在身后露出来，不能糊在自己脸上。
         drawDashTrail(g, player, light);
         drawPlayer(g, player, light);
+        drawPlayerAbilities(g, session);
         // 攻击层在角色之后绘制，避免角色把斩击和投射物遮住。
         drawAttacks(g, session, light);
         drawPhasePulse(g, session, light);
@@ -229,49 +233,17 @@ public final class GameRenderer {
     }
 
     /**
-     * 首领房清空后出现的层间传送门：一圈旋转的裂隙 + 目标层数。
+     * 首领房清空后的石质界隙门，门脚位置与传送交互中心一致。
      *
-     * <p>用玩家的动画计时做旋转，不额外引入渲染状态。
+     * <p>使用独立的模拟时钟，角色切换动作不会重置门内流光。
      */
     private void drawPortal(GraphicsContext g, GameSession session) {
         if (!session.isPortalVisible()) return;
         Room room = session.getNavigation().getCurrentRoom();
         double x = (room.minX() + room.maxX()) / 2.0;
         double y = (room.minY() + room.maxY()) / 2.0;
-        double time = session.getPlayer().getAnimationTime();
-        double pulse = 1.0 + Math.sin(time * 2.6) * 0.06;
-        double outer = 86.0 * pulse;
-        double inner = 54.0 * pulse;
-        g.setFill(Color.rgb(6, 4, 12, 0.9));
-        g.fillOval(x - outer, y - outer, outer * 2, outer * 2);
-        for (int i = 0; i < 3; i++) {
-            double start = Math.toDegrees(time * (2.2 + i * 0.7) + i * 120.0);
-            g.setStroke(Color.color(0.72, 0.42, 1.0, 0.9 - i * 0.18));
-            g.setLineWidth(7.0 - i * 1.6);
-            g.strokeArc(x - outer, y - outer, outer * 2, outer * 2, start, 108, ArcType.OPEN);
-        }
-        g.setFill(new RadialGradient(0, 0, 0.5, 0.5, 0.5, true, CycleMethod.NO_CYCLE,
-                new Stop(0.0, Color.web("#fff3c4")), new Stop(0.55, Color.web("#a86bff")),
-                new Stop(1.0, Color.color(0.25, 0.10, 0.4, 0.15))));
-        g.fillOval(x - inner, y - inner, inner * 2, inner * 2);
-        g.setStroke(Color.web("#ffe9a8"));
-        g.setLineWidth(3.0);
-        g.strokeOval(x - inner, y - inner, inner * 2, inner * 2);
-        boolean lastFloor = session.getFloor() >= session.getTotalFloors();
-        g.setTextAlign(TextAlignment.CENTER);
-        g.setFill(Color.web("#241033"));
-        g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 22));
-        g.fillText(lastFloor ? "通关" : "第 " + (session.getFloor() + 1) + " 层",
-                x, y + 8);
-        g.setTextAlign(TextAlignment.LEFT);
-        g.setFill(Color.rgb(255, 240, 200, 0.9));
-        g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 14));
-        g.setTextAlign(TextAlignment.CENTER);
-        g.fillText(session.getFloor() + " / " + session.getTotalFloors() + " 层已通", x, y + outer + 26);
-        g.fillText("走近按 E 传送", x, y + outer + 46);
-        g.setTextAlign(TextAlignment.LEFT);
+        PortalRenderer.draw(g, x, y, session.getVisualTime(), session.getFloor(), session.getTotalFloors());
     }
-
     /** 形态限定隐藏出口：用金色菱形提示位置，跨门时才由导航检查形态。 */
     private void drawHiddenExit(GraphicsContext g, GameSession session) {
         Room room = session.getNavigation().getCurrentRoom();
@@ -688,7 +660,9 @@ public final class GameRenderer {
             }
         }
         if (!light && session.getAttackSystem().isMeleeVisible()) {
-            drawMeleeArc(g, session, player);
+            for (var strike : session.getAttackSystem().getMeleeStrikes()) {
+                drawMeleeArc(g, player, strike);
+            }
         }
         if (session.isPhasePulseVisible()) {
             Image[] aura = light ? LIGHT_AURA : SHADOW_AURA;
@@ -797,36 +771,35 @@ public final class GameRenderer {
      * <p>扇形角度与距离都读模型里那一轮的实际值：环月镰是 360° 环斩、重剑是 40° 窄劈，
      * 用固定常量画就会让玩家看到的范围和实际结算范围对不上。
      */
-    private void drawMeleeArc(GraphicsContext g, GameSession session, Player player) {
-        var attacks = session.getAttackSystem();
-        double angle = Math.toDegrees(attacks.getMeleeAngleRadians());
-        double arc = attacks.getMeleeArcDegrees();
-        double range = attacks.getMeleeRange();
+    private void drawMeleeArc(GraphicsContext g, Player player, com.phantomcorridor.model.combat.PlayerAttackSystem.MeleeStrike strike) {
+        double angle = Math.toDegrees(strike.angleRadians());
+        double arc = strike.arcDegrees();
+        double range = strike.range();
         double progress = Math.max(0.0, Math.min(1.0,
-                attacks.getMeleeVisualTime() / GameConfig.SHADOW_MELEE_VISIBLE_TIME));
+                strike.visualTime() / GameConfig.SHADOW_MELEE_VISIBLE_TIME));
         double fade = 1.0 - progress * progress;
         double start = -angle - arc / 2.0;
         g.save();
         // Use the same radius and angle as hit detection. Clip the decorative sprite so
         // narrow weapon attacks cannot suggest damage outside their actual sector.
         g.beginPath();
-        g.moveTo(player.getX(), player.getY());
-        g.arc(player.getX(), player.getY(), range, range, start, arc);
+        g.moveTo(strike.x(), strike.y());
+        g.arc(strike.x(), strike.y(), range, range, start, arc);
         g.closePath();
         g.clip();
-        g.setFill(new RadialGradient(0, 0, player.getX(), player.getY(), range, false,
+        g.setFill(new RadialGradient(0, 0, strike.x(), strike.y(), range, false,
                 CycleMethod.NO_CYCLE, new Stop(0, Color.TRANSPARENT),
                 new Stop(0.65, Color.rgb(151, 56, 222, 0.06 * fade)),
                 new Stop(0.94, Color.rgb(191, 87, 255, 0.24 * fade)),
                 new Stop(1, Color.rgb(225, 162, 255, 0.10 * fade))));
-        g.fillOval(player.getX() - range, player.getY() - range, range * 2, range * 2);
+        g.fillOval(strike.x() - range, strike.y() - range, range * 2, range * 2);
         if (arc < 360.0 && SHADOW_SLASHES.length > 0) {
             Image slash = SHADOW_SLASHES[Math.min(SHADOW_SLASHES.length - 1,
-                    (int) (attacks.getMeleeVisualTime() / GameConfig.SHADOW_MELEE_VISIBLE_TIME * SHADOW_SLASHES.length))];
+                    (int) (strike.visualTime() / GameConfig.SHADOW_MELEE_VISIBLE_TIME * SHADOW_SLASHES.length))];
             double size = range * 2.0;
             g.save();
             g.setGlobalAlpha(fade);
-            g.translate(player.getX(), player.getY());
+            g.translate(strike.x(), strike.y());
             g.rotate(angle);
             g.drawImage(slash, -size / 2.0, -size * 0.5,
                     size, size * slash.getHeight() / Math.max(1.0, slash.getWidth()));
@@ -837,13 +810,70 @@ public final class GameRenderer {
         double bladeRadius = range - 5.0;
         g.setStroke(Color.rgb(178, 91, 242, 0.60 * fade));
         g.setLineWidth(9.0);
-        g.strokeArc(player.getX() - bladeRadius, player.getY() - bladeRadius,
+        g.strokeArc(strike.x() - bladeRadius, strike.y() - bladeRadius,
                 bladeRadius * 2, bladeRadius * 2, start, arc, ArcType.OPEN);
         g.setStroke(Color.rgb(245, 219, 255, 0.90 * fade));
         g.setLineWidth(2.0);
-        g.strokeArc(player.getX() - bladeRadius, player.getY() - bladeRadius,
+        g.strokeArc(strike.x() - bladeRadius, strike.y() - bladeRadius,
                 bladeRadius * 2, bladeRadius * 2, start, arc, ArcType.OPEN);
         g.restore();
+    }
+
+    private void drawPlayerAbilities(GraphicsContext g, GameSession session) {
+        var abilities = session.getAbilities();
+        var strike = abilities.visual();
+        if (strike != null) {
+            boolean light = strike.world() == WorldType.LIGHT;
+            double progress = abilities.visualProgress();
+            double radius = strike.radius();
+            String direction = PlayerAnimationCatalog.direction(Math.cos(strike.angle()), Math.sin(strike.angle()));
+            String vfxAction = strike.finisher() ? "finisher" : "skill/" + String.format("%02d", strike.skillIndex() + 1);
+            Image[] vfx = playerVfx(strike.world(), direction, vfxAction);
+            if (vfx.length > 0) {
+                Image frame = animationFrame(vfx, progress, 1.0, false, vfx.length);
+                double size = strike.finisher() ? radius * 2.15 : radius * 1.75;
+                double height = size * frame.getHeight() / Math.max(1.0, frame.getWidth());
+                g.save();
+                g.setGlobalAlpha(strike.finisher() ? 0.96 : 0.88);
+                g.setGlobalBlendMode(BlendMode.ADD);
+                g.drawImage(frame, strike.x() - size / 2.0, strike.y() - height / 2.0, size, height);
+                g.setGlobalBlendMode(BlendMode.SRC_OVER);
+                g.restore();
+            }
+            double start = -Math.toDegrees(strike.angle()) - strike.arc() / 2;
+            Color color = light ? LIGHT_GOLD : SHADOW_VIOLET;
+            g.save();
+            // V3 有完整独立特效时，保留很淡的判定轮廓，避免几何范围与动画脱节；
+            // 找不到资源时再显示完整的旧式几何特效作为兜底。
+            double shapeAlpha = vfx.length > 0 ? 0.025 : 0.07;
+            g.setFill(Color.color(color.getRed(), color.getGreen(), color.getBlue(),
+                    shapeAlpha + 0.08 * progress));
+            g.fillArc(strike.x() - radius, strike.y() - radius, radius * 2, radius * 2, start, strike.arc(), ArcType.ROUND);
+            g.setStroke(color.deriveColor(0, 1, 1.4, abilities.isCasting() ? 0.8 : 1 - progress));
+            g.setLineWidth(abilities.isCasting() ? 2 : strike.finisher() ? 9 : 5);
+            g.strokeArc(strike.x() - radius, strike.y() - radius, radius * 2, radius * 2, start, strike.arc(), ArcType.OPEN);
+            if (!abilities.isCasting()) {
+                double sweep = radius * (0.3 + progress * 0.7);
+                g.setLineWidth(strike.finisher() ? 14 : 7);
+                g.strokeArc(strike.x() - sweep, strike.y() - sweep, sweep * 2, sweep * 2, start, strike.arc(), ArcType.OPEN);
+                if (strike.finisher()) {
+                    for (int i = 0; i < 12; i++) {
+                        double a = i * Math.PI / 6 + progress;
+                        g.strokeLine(strike.x() + Math.cos(a) * sweep * 0.85, strike.y() + Math.sin(a) * sweep * 0.85,
+                                strike.x() + Math.cos(a) * sweep, strike.y() + Math.sin(a) * sweep);
+                    }
+                }
+            }
+            g.restore();
+        }
+        if (!abilities.feedback().isEmpty()) {
+            g.save();
+            g.setTextAlign(TextAlignment.CENTER);
+            g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 16));
+            g.setFill(Color.web("#ede0ff"));
+            g.fillText(abilities.feedback(), AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT - 52);
+            g.restore();
+        }
     }
 
     // 以下两个方法当前没有任何调用点（IDE 的 Unused 检查会报）：敌人与敌方弹体都改由
@@ -950,20 +980,30 @@ public final class GameRenderer {
         double centerX = AppConfig.VIEW_WIDTH / 2.0;
         double centerY = AppConfig.VIEW_HEIGHT / 2.0;
         g.setFill(Color.rgb(18, 12, 28, .97));
-        g.fillRoundRect(centerX - 300, centerY - 160, 600, 330, 24, 24);
+        g.fillRoundRect(centerX - 300, centerY - 190, 600, 390, 24, 24);
         g.setStroke(Color.web("#a878c7")); g.setLineWidth(2.0);
-        g.strokeRoundRect(centerX - 300, centerY - 160, 600, 330, 24, 24);
+        g.strokeRoundRect(centerX - 300, centerY - 190, 600, 390, 24, 24);
         g.setTextAlign(TextAlignment.CENTER);
         g.setFill(Color.web("#f0d7e8"));
         g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 42));
-        g.fillText("倒下了", AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0 - 24);
-        g.setFont(Font.font("Microsoft YaHei UI", 18));
+        g.fillText("倒下了", centerX, centerY - 104);
+        g.setFont(Font.font("Microsoft YaHei UI", 17));
         g.setFill(Color.web("#c9b4ca"));
-        g.fillText("第 " + session.getFloor() + " 层探索结束 · 金币 " + session.getCoins(),
-                AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0 + 18);
+        g.fillText("第 " + session.getFloor() + " 层探索结束", centerX, centerY - 70);
+        g.setFont(Font.font("Microsoft YaHei UI", 15));
+        g.setFill(Color.web("#e0cfea"));
+        g.fillText("击杀 " + session.getTotalKills() + "    用时 " + formatDuration(session.getVisualTime()),
+                centerX, centerY - 38);
+        g.fillText("金币 " + session.getCoins() + "    装备 " + session.getPlayer().getEquipment().size() + "/3",
+                centerX, centerY - 12);
         drawDeathButton(g, session, centerX - 170, centerY + 44, 140, 50, "重新开始", false);
         drawDeathButton(g, session, centerX + 30, centerY + 44, 140, 50, "返回主菜单", true);
         g.setTextAlign(TextAlignment.LEFT);
+    }
+
+    private static String formatDuration(double seconds) {
+        int total = (int) Math.max(0, Math.round(seconds));
+        return String.format("%02d:%02d", total / 60, total % 60);
     }
 
     /** 从独立 PNG 帧加载，不依赖旧版“固定四格图集”的假设。 */
@@ -1082,8 +1122,13 @@ public final class GameRenderer {
         g.fillText("穿 越 完 成", AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0 - 34);
         g.setFont(Font.font("Microsoft YaHei UI", 19));
         g.setFill(Color.web("#e5d3f5"));
-        g.fillText(session.getTotalFloors() + " 层裂隙全部走尽 · 金币 " + session.getCoins(),
-                AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0 + 12);
+        g.fillText(session.getTotalFloors() + " 层裂隙全部走尽",
+                AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0 + 8);
+        g.setFont(Font.font("Microsoft YaHei UI", 16));
+        g.setFill(Color.web("#e8d8f7"));
+        g.fillText("击杀 " + session.getTotalKills() + " · 用时 " + formatDuration(session.getVisualTime())
+                        + " · 金币 " + session.getCoins(),
+                AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0 + 36);
         g.setFont(Font.font("Microsoft YaHei UI", 16));
         g.setFill(Color.web("#c9b4ca"));
         g.fillText("[R] 再来一局        [M] 返回主菜单",
@@ -1103,12 +1148,26 @@ public final class GameRenderer {
             g.drawImage(dedicated, 0, 0, dedicated.getWidth(), dedicated.getHeight(), x, y, size, size);
             return;
         }
-        drawAtlasIcon(g, item.iconIndex() % 3, x, y, size, Color.web("#f0c86e"));
+        // 显式对应已核对的图集格子；新装备缺图时不能取模冒充另一件装备。
+        switch (item) {
+            case DAWN_WAND -> drawAtlasIcon(g, WEAPON_ICONS, 0, x, y, size, LIGHT_GOLD);
+            case SHADOW_FANG -> drawAtlasIcon(g, WEAPON_ICONS, 1, x, y, size, SHADOW_VIOLET);
+            case RIFT_TWINBLADE -> drawAtlasIcon(g, WEAPON_ICONS, 2, x, y, size, LIGHT_GOLD);
+            case DAWN_SEAL -> drawAtlasIcon(g, EQUIPMENT_ICONS, 0, x, y, size, LIGHT_GOLD);
+            case DUSK_CLOAK -> drawAtlasIcon(g, EQUIPMENT_ICONS, 1, x, y, size, SHADOW_VIOLET);
+            case PHASE_VESSEL -> drawAtlasIcon(g, EQUIPMENT_ICONS, 2, x, y, size, LIGHT_GOLD);
+            default -> {
+                g.save();
+                g.setFill(LIGHT_GOLD);
+                g.fillText(item.displayName().substring(0, 1), x + size * 0.25, y + size * 0.75);
+                g.restore();
+            }
+        }
     }
 
     /** 旧图集回退：三格横排图集里取第 {@code cell} 格；图集缺失时画一个纯色方块兜底。 */
-    private void drawAtlasIcon(GraphicsContext g, int cell, double x, double y, double size, Color fallback) {
-        Image source = cell < 3 ? WEAPON_ICONS : EQUIPMENT_ICONS;
+    private void drawAtlasIcon(GraphicsContext g, Image source, int cell,
+                               double x, double y, double size, Color fallback) {
         if (source == null) {
             g.setFill(fallback);
             g.fillRect(x + size / 2.0 - 8, y + size / 2.0 - 8, 16, 16);
@@ -1166,7 +1225,7 @@ public final class GameRenderer {
         if (selected) {
             g.setFill(Color.web("#fff2b0"));
             g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 12));
-            g.fillText(affordable ? "再按 E 确认" : "金币不足", x - 2, y + 40);
+            g.fillText(affordable ? "再按 F 确认" : "金币不足", x - 2, y + 40);
         }
     }
 
@@ -1174,7 +1233,7 @@ public final class GameRenderer {
         String prompt = session.getInteractionPrompt();
         if (prompt.isEmpty()) return;
         Player p = session.getPlayer();
-        boolean confirming = prompt.startsWith("E  确认") || prompt.startsWith("金币不足");
+        boolean confirming = prompt.startsWith("F  确认") || prompt.startsWith("金币不足");
         double width = 24 + prompt.length() * 13.0;
         // 提示框贴着角色，但不能顶出画布：商店确认文案比旧提示长不少。
         double x = Math.max(8, Math.min(p.getX() + 24, AppConfig.VIEW_WIDTH - width - 8));
@@ -2093,6 +2152,33 @@ public final class GameRenderer {
         return frames.toArray(Image[]::new);
     }
 
+    private static Map<String, Image> loadAbilityIcons() {
+        Map<String, Image> result = new HashMap<>();
+        String[] names = {"light_skill_01", "light_skill_02", "shadow_skill_01",
+                "shadow_skill_02", "light_finisher", "shadow_finisher"};
+        for (String name : names) {
+            Image image = loadUiImage("ability_icons/" + name + ".png");
+            if (image != null && !image.isError()) result.put(name, image);
+        }
+        return result;
+    }
+
+    private static Image[] playerVfx(WorldType world, String direction, String action) {
+        String key = (world == WorldType.LIGHT ? "light" : "shadow") + "/" + direction + "/" + action;
+        Image[] cached = PLAYER_VFX.get(key);
+        if (cached != null) return cached;
+        List<Image> frames = new ArrayList<>();
+        for (int i = 0; i < 64; i++) {
+            var resource = GameRenderer.class.getResource("/com/phantomcorridor/sprites/player_v3/vfx/"
+                    + key + "/phase_" + String.format("%02d", i) + ".png");
+            if (resource == null) break;
+            frames.add(new Image(resource.toExternalForm(), false));
+        }
+        Image[] result = frames.toArray(Image[]::new);
+        PLAYER_VFX.put(key, result);
+        return result;
+    }
+
     private static Image loadUiImage(String name) {
         var resource = GameRenderer.class.getResource("/com/phantomcorridor/ui/" + name);
         return resource == null ? null : new Image(resource.toExternalForm(), false);
@@ -2128,7 +2214,7 @@ public final class GameRenderer {
         drawHealthBar(g, player);
 
         g.setFill(Color.web("#8dc4ff"));
-        g.fillText("攻击", HUD_X + 14, HUD_Y + 46);
+        g.fillText("Q 技能", HUD_X + 14, HUD_Y + 46);
         int chargeSlots = player.getMaxAttackCharges();
         double cellWidth = Math.min(16.5, HUD_VALUE_WIDTH / Math.max(1, chargeSlots) - 2.5);
         double cellGap = 2.5;
@@ -2142,7 +2228,7 @@ public final class GameRenderer {
         }
 
         g.setFill(Color.web("#fdf6e9"));
-        g.fillText(player.isShiftSlowed() ? "减速" : player.getPhaseEnergy() >= GameConfig.PHASE_ENERGY_MAX ? "强化" : "切界", HUD_X + 14, HUD_Y + 66);
+        g.fillText("R 相位", HUD_X + 14, HUD_Y + 66);
         double phaseY = HUD_Y + 54;
         g.setFill(Color.rgb(255, 255, 255, 0.12));
         g.fillRoundRect(HUD_VALUE_X, phaseY, HUD_VALUE_WIDTH, 14, 7, 7);
@@ -2154,6 +2240,10 @@ public final class GameRenderer {
             g.setStroke(Color.web("#fff4bc")); g.setLineWidth(1.4);
             g.strokeRoundRect(HUD_VALUE_X - 1.5, phaseY - 1.5, HUD_VALUE_WIDTH + 3, 17, 9, 9);
         }
+        g.setFont(Font.font("Consolas", 11));
+        g.setFill(Color.web("#fdf6e9"));
+        g.fillText(player.getSkillEnergy() + "/" + player.getMaxSkillEnergy(), HUD_VALUE_X + HUD_VALUE_WIDTH + 5, HUD_Y + 44);
+        g.fillText((int) player.getPhaseEnergy() + "/100", HUD_VALUE_X + HUD_VALUE_WIDTH + 5, HUD_Y + 66);
 
         // 底行缩写成「光残敌 / 影残敌」：字数少了才放得下，盾量接在金币后面同一行。
         // 盾量取整：护盾是临时生命值，小数（12.3）在这里只会占位置、读不出额外信息。
@@ -2171,8 +2261,9 @@ public final class GameRenderer {
         // 两个面板各说一半，玩家才分得清哪一份是自己带的、哪一份是捡来的。
         g.setFill(Color.web("#a99bb2"));
         g.setFont(Font.font("Microsoft YaHei UI", 12));
-        g.fillText("基础攻击 " + Player.BASE_ATTACK_DAMAGE + "　·　加成见装备栏", HUD_X + 14, HUD_Y + 114);
+        g.fillText("Q/E 技能　R 终结技　Ctrl 切界　F 交互", HUD_X + 14, HUD_Y + 145);
 
+        drawAbilityHudIcons(g, session, light);
         drawWorldBadge(g, domain, light);
         drawEquipmentBar(g, session);
         drawBossBanner(g, session);
@@ -2180,6 +2271,40 @@ public final class GameRenderer {
         g.setFill(Color.rgb(230, 220, 235, 0.28));
         g.setFont(Font.font("Consolas", 11));
         g.fillText(String.format("%.0f FPS", fps), AppConfig.VIEW_WIDTH - 150, 40);
+    }
+
+    private void drawAbilityHudIcons(GraphicsContext g, GameSession session, boolean light) {
+        var abilities = session.getAbilities();
+        String form = light ? "light" : "shadow";
+        String[] keys = {form + "_skill_01", form + "_skill_02", form + "_finisher"};
+        String[] labels = {"Q", "E", "R"};
+        double size = 30.0;
+        for (int i = 0; i < keys.length; i++) {
+            double x = HUD_X + 14 + i * 48.0;
+            double y = HUD_Y + 91;
+            Image icon = ABILITY_ICONS.get(keys[i]);
+            double cooldown = i < 2 ? abilities.skillCooldown(i) : abilities.finisherCooldown();
+            boolean ready = cooldown <= 0.0001 && (i < 2
+                    ? session.getPlayer().getSkillEnergy() >= GameConfig.SKILL_ENERGY_COST
+                    : session.getPlayer().getPhaseEnergy() >= GameConfig.FINISHER_PHASE_COST);
+            g.setFill(Color.rgb(5, 4, 10, 0.88));
+            g.fillRoundRect(x - 2, y - 2, size + 4, size + 4, 6, 6);
+            if (icon != null) {
+                g.setGlobalAlpha(ready ? 1.0 : 0.38);
+                g.drawImage(icon, x, y, size, size);
+                g.setGlobalAlpha(1.0);
+            } else {
+                g.setFill(i == 2 ? Color.web("#b76cff") : Color.web("#67b9ff"));
+                g.fillRoundRect(x + 3, y + 3, size - 6, size - 6, 5, 5);
+            }
+            if (!ready) {
+                g.setFill(Color.rgb(0, 0, 0, 0.58));
+                g.fillArc(x, y, size, size, 90, 360 * Math.min(1, cooldown / (i == 2 ? GameConfig.FINISHER_COOLDOWN : GameConfig.SKILL_COOLDOWN)), ArcType.ROUND);
+            }
+            g.setFill(Color.web("#f7efff"));
+            g.setFont(Font.font("Consolas", FontWeight.BOLD, 10));
+            g.fillText(labels[i], x + 8, y + size + 11);
+        }
     }
 
     /**
@@ -2235,7 +2360,7 @@ public final class GameRenderer {
         g.setTextAlign(TextAlignment.CENTER);
         g.setFill(light ? Color.rgb(237, 210, 156, 0.56) : Color.rgb(198, 169, 230, 0.58));
         g.setFont(Font.font("Microsoft YaHei UI", 13));
-        g.fillText("WASD / 方向键移动    ·    鼠标瞄准 / 左键攻击    ·    空格 闪避冲刺    ·    E 交互 / 换装    ·    1-3 丢弃装备    ·    TAB 穿梭双界    ·    ESC 取消 / 暂停",
+        g.fillText("WASD 移动 · 左键普攻 · Q/E 技能 · R 终结技 · 空格闪避 · Ctrl 切界 · F 交互 · 1-3 丢装备 · Esc 暂停",
                 AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT - 24.0);
         g.setTextAlign(TextAlignment.LEFT);
     }

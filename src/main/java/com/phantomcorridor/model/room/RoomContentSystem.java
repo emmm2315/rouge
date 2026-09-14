@@ -17,7 +17,7 @@ import com.phantomcorridor.model.entity.Player;
  *       之后反复进出既不会重刷，也不会丢失——旧实现把地面物品存在会话层并在换房时清表，
  *       于是“进商店看一眼、出门再回来”货架就空了；</li>
  *   <li><b>怪物房不复活</b>：清空过的战斗/首领房再次进入时 {@code EnemySystem} 直接跳过生成；</li>
- *   <li><b>商店二次确认</b>：第一次按 E 只选中并显示价格，第二次才扣款，
+ *   <li><b>商店二次确认</b>：第一次按 F 只选中并显示价格，第二次才扣款，
  *       玩家走出 {@link GameConfig#SHOP_CONFIRM_RESET_RADIUS} 后选择自动取消，避免误触。</li>
  * </ul>
  */
@@ -105,7 +105,7 @@ public final class RoomContentSystem {
         }
     }
 
-    /** 每帧调用：玩家走出商品范围后取消二次确认，下次靠近要重新按 E 选中。 */
+    /** 每帧调用：玩家走出商品范围后取消二次确认，下次靠近要重新按 F 选中。 */
     public void update(Room room, Player player) {
         if (selectedOffer == null) return;
         boolean stillOffered = room.type() == RoomType.SHOP
@@ -137,7 +137,7 @@ public final class RoomContentSystem {
      * 处理一次 E 交互。
      *
      * <p>{@code reconsider == false} 时，刚被 ESC 放弃的那一件不再追问：ESC 之后玩家可以接着
-     * 按 ESC 暂停，不会被重新弹出的面板挡住。玩家真的又按了一次 E（{@code reconsider == true}）
+     * 按 ESC 暂停，不会被重新弹出的面板挡住。玩家真的又按了一次 F（{@code reconsider == true}）
      * 就说明他是想重新考虑，此时解除“已放弃”并照常进入替换选择。
      *
      * @param inCombat 当前是否处于战斗中；战斗中不允许换装（见 {@link #collectEquipment}）
@@ -179,18 +179,18 @@ public final class RoomContentSystem {
                     : "装备栏已满：按 1-3 替换，ESC 取消";
         }
         RoomLoot loot = room.loot();
-        if (room.type() == RoomType.EVENT && loot.isEventPending()) return "E  触发事件";
+        if (room.type() == RoomType.EVENT && loot.isEventPending()) return "F  触发事件";
         if (isPortalTarget(room, player)) {
             return floor >= GameConfig.TOTAL_FLOORS
-                    ? "E  穿过裂隙（通关）"
-                    : "E  进入传送门（第 " + (floor + 1) + " 层）";
+                    ? "F  穿过裂隙（通关）"
+                    : "F  进入传送门（第 " + (floor + 1) + " 层）";
         }
-        if (room.hasUnopenedChest() && nearChest(room, player)) return "E  打开宝箱";
+        if (room.hasUnopenedChest() && nearChest(room, player)) return "F  打开宝箱";
         Pickup target = nearestPickup(room, player);
         if (target == null) return "";
         int price = room.type() == RoomType.SHOP ? priceOf(target) : -1;
         if (price >= 0) {
-            if (target != selectedOffer) return "E  购买 " + target.displayName() + " " + price + " 金币";
+            if (target != selectedOffer) return "F  购买 " + target.displayName() + " " + price + " 金币";
             if (player.getCoins() < price) {
                 // 金币不够时替换面板不会弹出，提示必须说明原因，否则玩家会以为按键失灵。
                 return "金币不足：需 " + price + "，当前 " + player.getCoins();
@@ -198,15 +198,15 @@ public final class RoomContentSystem {
             if (player.isEquipmentFull()) {
                 return inCombat
                         ? "战斗中无法换装"
-                        : "E  确认购买 " + price + " 金币（装备栏已满，需选择替换）";
+                        : "F  确认购买 " + price + " 金币（装备栏已满，需选择替换）";
             }
-            return "E  确认购买 " + price + " 金币（走开取消）";
+            return "F  确认购买 " + price + " 金币（走开取消）";
         }
-        if (target.type() != Pickup.Type.EQUIPMENT) return "E  拾取 " + target.displayName();
+        if (target.type() != Pickup.Type.EQUIPMENT) return "F  拾取 " + target.displayName();
         if (inCombat) return "战斗中无法换装";
         return player.isEquipmentFull()
-                ? "E  换装 " + target.displayName() + "（装备栏已满，需选择替换）"
-                : "E  装备 " + target.displayName();
+                ? "F  换装 " + target.displayName() + "（装备栏已满，需选择替换）"
+                : "F  装备 " + target.displayName();
     }
 
     /**
@@ -253,7 +253,7 @@ public final class RoomContentSystem {
         return price >= 0 && player.getCoins() >= price;
     }
 
-    /** 第一次按 E 只选中；再按一次才真正扣款装备。 */
+    /** 第一次按 F 只选中；再按一次才真正扣款装备。 */
     private Outcome trade(Room room, Player player, Pickup offer, boolean inCombat) {
         if (selectedOffer != offer) {
             selectedOffer = offer;
@@ -281,7 +281,7 @@ public final class RoomContentSystem {
     /**
      * 地面装备：装有空位就直接上身，满栏则转入替换选择。
      *
-     * <p>战斗中直接放弃这次交互——装备留在原地，清完怪再按 E 即可。
+     * <p>战斗中直接放弃这次交互——装备留在原地，清完怪再按 F 即可。
      */
     private Outcome collectEquipment(Room room, Player player, Pickup pickup, boolean inCombat) {
         if (inCombat) return Outcome.NONE;
@@ -353,7 +353,7 @@ public final class RoomContentSystem {
      * 丢弃物的落点：玩家脚下的一个小扇形。
      *
      * <p>落点必须同时满足两件事：<b>留在原地</b>（玩家走开也不会消失，可以回来再捡）且
-     * <b>不越出交互半径</b>（否则丢在脚下的东西反而按 E 够不着）。所以半径取一个略小于
+     * <b>不越出交互半径</b>（否则丢在脚下的东西反而按 F 够不着）。所以半径取一个略小于
      * {@link GameConfig#INTERACT_RADIUS} 的定值，并按玩家周围已有几件装备逐件旋开 45°，
      * 让连丢几件同类装备时它们不会叠成一点、分不清要捡哪一件。
      */

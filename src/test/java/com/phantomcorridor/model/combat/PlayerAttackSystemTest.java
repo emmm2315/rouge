@@ -35,7 +35,7 @@ class PlayerAttackSystemTest {
     }
 
     @Test
-    void aFullChargeBarGivesAComfortableBurstOfShots() {
+    void basicAttacksDoNotConsumeTheSkillBar() {
         Player player = new Player(100.0, 100.0);
         PlayerAttackSystem attacks = new PlayerAttackSystem();
         int shots = 0;
@@ -46,8 +46,8 @@ class PlayerAttackSystemTest {
             shots++;
         }
 
-        assertEquals(GameConfig.ATTACK_CHARGE_MAX, shots, "蓝条应当正好支撑满充能次数的连射");
-        assertTrue(shots >= 8, "满充能连射次数不能太少，实际 " + shots + " 发");
+        assertEquals(40, shots);
+        assertEquals(GameConfig.ATTACK_CHARGE_MAX, player.getSkillEnergy());
     }
 
     @Test

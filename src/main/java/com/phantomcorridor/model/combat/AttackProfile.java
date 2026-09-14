@@ -12,10 +12,10 @@ import com.phantomcorridor.model.entity.Player;
  * 防御前伤害 = 对应基础伤害 × 该段系数 ×（1 + 当前生效的同类伤害加成之和）。
  * 倍率一律相对 {@link GameConfig} 的基础值表示，所以基础攻击就是系数 1.0、间隔 1.0。
  *
- * <p>形态类武器（三叉杖、长杖、环月镰……）是**替换攻击方案**而不是叠加属性：
- * 装上贯日长杖就不再是“三叉杖 + 长矛”，而是「这次出手改用长矛的方案」。
- * 同界同时带多件改变攻击方式的武器时，按 {@link PlayerAttackSystem} 里的固定优先级取一件，
- * 保证手感稳定、可预期。
+ * <p>形态类武器（三叉杖、长杖、环月镰……）各自提供一套独立攻击方案。
+ * 同界同时带多件改变攻击方式的武器时，{@link PlayerAttackSystem} 会在同一轮攻击中
+ * 同时启动这些方案；每件武器的弹体、前摇、扇形和延迟段都独立结算，避免后装备的武器
+ * 被固定优先级静默覆盖。
  *
  * <p>纯数据：不引用 JavaFX，也不持有任何会变的状态（会变的状态在 {@link Projectile} 上）。
  */
@@ -78,6 +78,21 @@ public record AttackProfile(
     /** 一轮攻击是否由多颗弹体组成（三叉杖、二连发）。 */
     public boolean isMultiPellet() { return pellets > 1; }
 
+    /**
+     * 返回仅调整弹速后的同一攻击方案。
+     *
+     * <p>旧版「晨曦法杖」提供的是基础光弹速度加成，而不是一套新的攻击形态；
+     * 因此由攻击系统在生成基础光弹时使用这个无状态副本，避免修改共享方案或影响
+     * 贯日长杖等已有专属弹速。
+     */
+    public AttackProfile withSpeedScale(double multiplier) {
+        if (multiplier == 1.0) return this;
+        return new AttackProfile(world, shape, pellets, spreadDegrees, damageCoefficients,
+                extraHits, speedScale * multiplier, lifetimeScale, radiusScale,
+                cooldownScale, minCooldown, meleeArcDegrees, meleeRangeScale, windup,
+                pelletInterval);
+    }
+
     // ---- 各武器的具体方案 ----
 
     /** 基础光弹：单发、系数 1.0、间隔 1.0。 */
@@ -86,9 +101,9 @@ public record AttackProfile(
                 1.0, 1.0, 1.0, 1.0, 0.0);
     }
 
-    /** 基础影斩：前方扇形、系数 1.0、间隔 1.0。 */
+    /** 基础影斩：前方扇形、系数 1.2、间隔 1.0。近身风险换取更高的单次伤害。 */
     public static AttackProfile baseShadow() {
-        return shadow(ProjectileShape.FANG, 1.0, GameConfig.SHADOW_MELEE_ARC_DEGREES, 1.0, 1.0, 0.0, 0.0);
+        return shadow(ProjectileShape.FANG, 1.20, GameConfig.SHADOW_MELEE_ARC_DEGREES, 1.0, 1.0, 0.0, 0.0);
     }
 
     /**

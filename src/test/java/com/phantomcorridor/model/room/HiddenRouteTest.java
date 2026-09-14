@@ -39,11 +39,11 @@ class HiddenRouteTest {
         Player player = new Player(640, 480);
         navigation.placeAtEntrance(player);
 
-        navigation.move(player, 1, 0, 3.0);
+        for (int i = 0; i < 180; i++) navigation.move(player, 1, 0, 1.0 / 60);
         assertSame(source, navigation.getCurrentRoom(), "错误形态只能被门拒绝，不能锁死或传送");
 
         player.toggleWorld();
-        navigation.move(player, 1, 0, 3.0);
+        for (int i = 0; i < 180; i++) navigation.move(player, 1, 0, 1.0 / 60);
         assertSame(hidden, navigation.getCurrentRoom(), "正确形态必须在真实跨门时触发");
     }
 

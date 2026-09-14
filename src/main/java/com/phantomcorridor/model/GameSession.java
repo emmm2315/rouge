@@ -7,6 +7,7 @@ import com.phantomcorridor.model.entity.Enemy;
 import com.phantomcorridor.model.entity.EnemyKind;
 import com.phantomcorridor.model.entity.Player;
 import com.phantomcorridor.model.combat.PlayerAttackSystem;
+import com.phantomcorridor.model.combat.PlayerAbilitySystem;
 import com.phantomcorridor.model.combat.EnemyProjectileSystem;
 import com.phantomcorridor.model.combat.EnemySystem;
 import com.phantomcorridor.model.combat.SummonRift;
@@ -22,6 +23,7 @@ public final class GameSession {
     private final Player player = new Player(AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0);
     private final WorldShiftSystem worldShift = new WorldShiftSystem();
     private final PlayerAttackSystem attackSystem = new PlayerAttackSystem();
+    private final PlayerAbilitySystem abilities = new PlayerAbilitySystem();
     private final EnemyProjectileSystem enemyProjectiles = new EnemyProjectileSystem();
     private final EnemySystem enemies = new EnemySystem();
     private final RoomNavigationSystem navigation = new RoomNavigationSystem();
@@ -34,6 +36,9 @@ public final class GameSession {
     private double phasePulseVisibleRemaining;
     private double aimX;
     private double aimY;
+    private double visualTime;
+    public double getVisualTime() { return visualTime; }
+    private int totalKills;
     private String roomAnnouncement = "";
     private double roomAnnouncementRemaining;
     private boolean floorAnnouncement;
@@ -58,6 +63,9 @@ public final class GameSession {
     public void newRun(String configuredSeed, Difficulty difficulty) {
         player.reset(AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0);
         worldShift.reset();
+        visualTime = 0;
+        totalKills = 0;
+        abilities.reset();
         runSeed = MapGenerator.parseSeed(configuredSeed);
         this.difficulty = difficulty == null ? Difficulty.NORMAL : difficulty;
         player.setDifficulty(this.difficulty);
@@ -78,6 +86,8 @@ public final class GameSession {
     private void startFloor() {
         dungeonSeed = runSeed + (floor - 1) * GameConfig.FLOOR_SEED_STEP;
         attackSystem.reset();
+        abilities.clearRoomEffects();
+        player.cancelAbilityAnimation();
         enemyProjectiles.reset();
         enemies.reset();
         enemies.setFloor(floor);
@@ -111,22 +121,26 @@ public final class GameSession {
 
     public void update(double dt, double movementX, double movementY,
                        double targetX, double targetY, boolean attacking) {
+        visualTime += Math.max(0, dt);
         worldShift.update(dt);
         phasePulseVisibleRemaining = Math.max(0.0, phasePulseVisibleRemaining - dt);
         roomAnnouncementRemaining = Math.max(0.0, roomAnnouncementRemaining - Math.max(0.0, dt));
         if (player.getHp() <= 0 || runCleared) {
+            abilities.clearRoomEffects();
+            player.cancelAbilityAnimation();
             player.updateDash(dt);
             player.updateAnimation(dt, 0.0, 0.0, false, false);
             return;
         }
         aimX = targetX;
         aimY = targetY;
+        navigation.setHiddenExitLocked(isInCombat());
         double movementStartX = player.getX();
         double movementStartY = player.getY();
         // 冲刺优先于普通移动：冲刺期间忽略方向输入，位移完全由冲刺方向决定。
         if (dashRequested) {
             dashRequested = false;
-            player.tryStartDash(movementX, movementY);
+            if (!abilities.isCasting()) player.tryStartDash(movementX, movementY);
         }
         if (player.isDashing()) {
             // 只走"这一段冲刺还剩的时间"：否则最后一帧会按整帧位移，固定 150 像素会随帧对齐漂移。
@@ -138,8 +152,12 @@ public final class GameSession {
         }
         double actualMovementX = player.getX() - movementStartX;
         double actualMovementY = player.getY() - movementStartY;
+        if (!player.isDashing()) player.advanceWalkDistance(Math.min(Math.hypot(actualMovementX, actualMovementY),
+                player.movementSpeed() * Math.max(0, dt)));
         player.updateDash(dt);
         if (navigation.consumeRoomChanged()) {
+            abilities.clearRoomEffects();
+            player.cancelAbilityAnimation();
             attackSystem.clearTransientAttacks();
             Room entered = navigation.getCurrentRoom();
             roomContent.enterRoom(entered, player);
@@ -156,6 +174,7 @@ public final class GameSession {
             lastMeleeReleaseCount = attackSystem.getMeleeReleaseCount();
             player.onShadowAttackReleased();
         }
+        abilities.update(dt, player, enemies, navigation);
         enemies.update(dt, player, attackSystem, navigation);
         applyHitKnockback();
         if (enemies.consumePhaseTransitions() > 0) {
@@ -171,12 +190,14 @@ public final class GameSession {
             roomAnnouncementRemaining = 2.0;
         }
         int kills = enemies.consumeKills();
+        if (kills > 0) totalKills += kills;
+        int phaseReward = enemies.consumePhaseEnergyReward();
         Room current = navigation.getCurrentRoom();
         if (current.type() == RoomType.BATTLE || current.type() == RoomType.BOSS
                 || current.type() == RoomType.EVENT) {
             current.setCleared(enemies.isRoomCleared());
         }
-        if (kills > 0) player.restorePhaseEnergy(kills * GameConfig.PHASE_ENERGY_PER_FRAGMENT);
+        if (phaseReward > 0) player.restorePhaseEnergy(phaseReward);
         if (kills > 0) player.addCoins(kills + Math.floorMod((int) (dungeonSeed + kills * 13L), kills * 3 + 1));
         // combatActive = !enemies.isRoomCleared();   // 同上：这个状态没有任何读取点
         if (interactRequested) {
@@ -184,8 +205,8 @@ public final class GameSession {
             interact(current);
         }
         player.restorePhaseEnergy(phaseEnergyRegenRate() * dt);
-        player.updateAttackCharges(dt);
-        if (attacking) {
+        player.updateSkillEnergy(dt);
+        if (attacking && !abilities.isCasting()) {
             attackSystem.tryAttack(player, aimX, aimY);
         }
         // Animation follows actual movement and successful attack events, not held input.
@@ -206,12 +227,37 @@ public final class GameSession {
     }
 
     public boolean tryShiftWorld() {
+        return tryShiftWorld(false);
+    }
+
+    public boolean tryUseAbility(boolean finisher, double targetX, double targetY) {
+        if (runCleared || getPendingEquipment() != null) return false;
+        return finisher
+                ? abilities.tryCastFinisher(player, targetX, targetY, navigation)
+                : abilities.tryCast(player, 0, targetX, targetY, navigation);
+    }
+
+    /** 释放第二个形态技能；技能槽 0 仍由旧的 Q 接口兼容。 */
+    public boolean tryUseSkill(int skillIndex, double targetX, double targetY) {
+        if (runCleared || getPendingEquipment() != null) return false;
+        return abilities.tryCast(player, skillIndex, targetX, targetY, navigation);
+    }
+
+    /** 统一命名的重载，供 UI/自动化输入按技能槽调用。 */
+    public boolean tryUseAbility(int skillIndex, double targetX, double targetY) {
+        return tryUseSkill(skillIndex, targetX, targetY);
+    }
+
+    public PlayerAbilitySystem getAbilities() { return abilities; }
+
+    public boolean tryShiftWorld(boolean empowered) {
+        if (runCleared || abilities.isCasting() || getPendingEquipment() != null) return false;
         WorldType targetWorld = player.getCurrentWorld() == WorldType.LIGHT
                 ? WorldType.SHADOW : WorldType.LIGHT;
         double[] safePosition = navigation.findNearestSafePosition(
                 player.getX(), player.getY(), targetWorld);
         if (safePosition == null) return false;
-        if (!worldShift.tryShift(player)) return false;
+        if (!worldShift.tryShift(player, empowered)) return false;
         player.setPosition(safePosition[0], safePosition[1]);
         // 切界后给攻击充能一个短时加速：玩家常在没充能时切界回能，这里缩短那段空窗。
         player.boostAttackChargeRecovery(GameConfig.WORLD_SWITCH_CHARGE_BOOST_DURATION);
@@ -336,6 +382,8 @@ public final class GameSession {
         return !enemies.isRoomCleared();
     }
 
+    public int getTotalKills() { return totalKills; }
+
     /** 当前交互目标（地面拾取物）；渲染层用它给最近的那件物品画名称标签。 */
     public Pickup getInteractionTarget() {
         return roomContent.currentTarget(navigation.getCurrentRoom(), player);
@@ -366,7 +414,7 @@ public final class GameSession {
     /**
      * 当前交互目标是否是一件刚被 ESC 放弃的装备。
      *
-     * <p>渲染层据此不再画“E 换装”提示：面板已经关掉了，再提示可换装会让玩家反复按 E。
+     * <p>渲染层据此不再画“F 换装”提示：面板已经关掉了，再提示可换装会让玩家反复按 F。
      */
     public boolean isInteractionTargetDismissed() {
         Room current = navigation.getCurrentRoom();

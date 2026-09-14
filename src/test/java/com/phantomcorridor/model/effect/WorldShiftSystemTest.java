@@ -12,6 +12,7 @@ class WorldShiftSystemTest {
     @Test
     void shiftConsumesEnergyAndEmitsOnePulse() {
         Player player = new Player(100, 100);
+        player.restorePhaseEnergy(100);
         WorldShiftSystem system = new WorldShiftSystem();
 
         assertTrue(system.tryShift(player));

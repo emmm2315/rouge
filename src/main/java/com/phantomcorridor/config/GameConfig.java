@@ -70,18 +70,18 @@ public final class GameConfig {
     public static final double SHADOW_MELEE_VISIBLE_TIME = 0.13;
     public static final double SHADOW_ATTACK_COOLDOWN = 0.55;
     /**
-     * 攻击充能（蓝条）上限：决定一段连射能打多少发，充能耗尽后按
-     * {@link #ATTACK_CHARGE_RECOVERY_TIME} 逐发回复。
-     *
-     * <p>数值重构（战斗刻度 ×10）之后敌人生命值整体上了一个量级，如果充能上限还停在 10 发，
-     * 打空一管蓝条就只够蹭掉一只小怪的血皮，房间会退化成「打五秒、等十秒」的换弹游戏。
-     * 因此容量与回复速度一起放宽：满管 16 发、每 0.7 秒回一发，
-     * 持续输出从 0.74 发/秒提到 1.43 发/秒，大血量目标才打得动。
+     * 技能蓝量上限。沿用旧攻击充能字段以兼容道具容量与既有模型接口，
+     * 普攻不再扣除；Q/E 技能每次消耗 6 点，每 1.5 秒恢复 1 点。
      */
     public static final int ATTACK_CHARGE_MAX = 16;
     public static final int LIGHT_ATTACK_CHARGE_COST = 1;
     public static final int SHADOW_ATTACK_CHARGE_COST = 1;
-    public static final double ATTACK_CHARGE_RECOVERY_TIME = 0.5;
+    public static final double ATTACK_CHARGE_RECOVERY_TIME = 1.5;
+    public static final int SKILL_ENERGY_COST = 6;
+    public static final double SKILL_COOLDOWN = 4.0;
+    public static final double FINISHER_COOLDOWN = 30.0;
+    /** 终结技门槛：相位能量满槽前即可释放，避免一局中长期等不到终结技。 */
+    public static final double FINISHER_PHASE_COST = 80.0;
 
     // ---- 装备专属效果（《新增 15 件装备与攻击特效设计》§五） ----
     /** 相位陀螺：成功切界后的攻速窗口时长（秒）与间隔倍率。 */
@@ -483,23 +483,26 @@ public final class GameConfig {
     /** 相位能量上限 */
     public static final double PHASE_ENERGY_MAX = 100.0;
 
-    /** 初始相位能量（满格） */
-    public static final double PHASE_ENERGY_INITIAL = 100.0;
+    /** 初始相位为零，需战斗或自然回复积攒。 */
+    public static final double PHASE_ENERGY_INITIAL = 0.0;
 
-    /** 每次切换世界所需能量（必须达到上限，切换后清空） */
+    /** 主动强化切界的相位费用；普通 Ctrl 切界免费。 */
     public static final double PHASE_ENERGY_PER_SWITCH = 100.0;
 
-    /** 脱战后自动回复速率（点/秒，占位；§3.4"脱战一段时间后缓慢自动回复"） */
-    public static final double PHASE_ENERGY_REGEN_PER_SEC = 8.0;
+    /** 游戏模拟推进时自然回复的相位点数 / 秒。 */
+    public static final double PHASE_ENERGY_REGEN_PER_SEC = 0.5;
 
     /** 攻击命中获得充能（点/次，占位；§3.4"攻击/被击也能少量充能"） */
     public static final double PHASE_ENERGY_ON_ATTACK = 2.0;
 
-    /** 被击获得充能（点/次，占位） */
-    public static final double PHASE_ENERGY_ON_HIT = 4.0;
+    /** 受击不回充，避免靠挨打刷终结技。 */
+    public static final double PHASE_ENERGY_ON_HIT = 0.0;
 
     /** 相位碎片拾取回复能量（点/个，占位；§3.4 与 §8.3 掉落） */
-    public static final double PHASE_ENERGY_PER_FRAGMENT = 25.0;
+    public static final double PHASE_ENERGY_PER_FRAGMENT = 10.0;
+    /** 旧版统一击杀奖励的兼容常量；实际运行时改由 EnemyKind.phaseEnergyReward() 按物种结算。 */
+    @Deprecated
+    public static final double PHASE_ENERGY_PER_KILL = 3.0;
 
     /** 切换世界后的冷却时间（秒，占位；§3.3"切换后进入冷却恢复期"） */
     public static final double WORLD_SWITCH_COOLDOWN = 0.3;
@@ -509,7 +512,7 @@ public final class GameConfig {
     public static final double SCORCH_DURATION = 6.0;
     public static final int SCORCH_MAX_STACKS = 3;
     public static final double SCORCH_DAMAGE_PER_STACK = 0.4;
-    public static final double SCORCH_ENERGY_PER_STACK = 8.0;
+    public static final double SCORCH_ENERGY_PER_STACK = 1.0;
 
     /** 切界脉冲清除玩家周围敌方弹幕的半径。 */
     public static final double PHASE_PULSE_RADIUS = 118.0;

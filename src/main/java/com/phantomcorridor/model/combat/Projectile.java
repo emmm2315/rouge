@@ -56,6 +56,8 @@ public final class Projectile {
     private int bouncesRemaining;
     /** 弹射/爆裂的落点半径（像素）。 */
     private double effectRadius;
+    /** 爆裂伤害系数（炽核权杖：接触伤害为 0，伤害全由爆炸这一份承担）。 */
+    private double burstCoefficient = 1.0;
     /** 归影双刃：到达最远点后开始返程。 */
     private boolean returning;
 
@@ -167,6 +169,8 @@ public final class Projectile {
     public void setBounces(int bounces) { this.bouncesRemaining = Math.max(0, bounces); }
     public void setEffectRadius(double effectRadius) { this.effectRadius = effectRadius; }
     public double getEffectRadius() { return effectRadius; }
+    public void setBurstCoefficient(double coefficient) { this.burstCoefficient = coefficient; }
+    public double getBurstCoefficient() { return burstCoefficient; }
     public void setDamageCoefficient(double coefficient) { this.damageCoefficient = coefficient; }
     public double getDamageCoefficient() { return damageCoefficient; }
     public int getHitIndex() { return hitIndex; }

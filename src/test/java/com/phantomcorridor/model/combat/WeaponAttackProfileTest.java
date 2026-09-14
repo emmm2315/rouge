@@ -12,7 +12,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * 《新增 15 件装备与攻击特效设计》§四 的 8 件武器：每一件都必须**替换攻击方案**，
+ * 《新增 15 件装备与攻击特效设计》§四 的 8 件武器：每一件都必须释放自己的攻击方案，多件与同名武器同时出手，
  * 而不是换一个叠加属性。
  *
  * <p>这一组用例逐条对照设计文档里的数值：弹体数量与张角、每发系数、间隔倍率与绝对下限、
@@ -124,6 +124,7 @@ class WeaponAttackProfileTest {
         Projectile core = attacks.getProjectiles().getFirst();
         assertEquals(Projectile.Behaviour.BURST, core.getBehaviour());
         assertEquals(0.0, core.getDamageCoefficient(), EPS, "光核本身没有接触伤害");
+        assertEquals(1.10, core.getBurstCoefficient(), EPS, "爆炸承担 1.10 的伤害系数");
         assertEquals(GameConfig.SOLAR_BURST_RADIUS, core.getEffectRadius(), EPS);
 
         double speed = Math.hypot(core.getVelocityX(), core.getVelocityY());
@@ -241,15 +242,18 @@ class WeaponAttackProfileTest {
     // ---- 通用规则 ----
 
     @Test
-    void weaponsReplaceTheAttackPlanInsteadOfStackingDamageBonuses() {
-        // 设计文档 §三：「特效武器不再附带原武器的加成」「不能同时得到三叉杖与贯日长杖的能力」。
+    void multipleAttackWeaponsRunTogetherWithoutStackingDamageBonuses() {
+        // 当前设计：改变攻击方式的装备按稳定优先级同时启动；它们不再额外叠加百分比伤害。
         Player player = lightPlayer(EquipmentType.PRISM_FAN_WAND, EquipmentType.SUNLANCE);
         PlayerAttackSystem attacks = new PlayerAttackSystem();
         attacks.tryAttack(player, 200.0, 100.0);
 
-        // 只按优先级启用一件：长杖优先，所以是 1 发穿透光矛，而不是 3 发散射。
-        assertEquals(1, attacks.getProjectiles().size());
-        assertEquals(Projectile.Behaviour.PIERCE, attacks.getProjectiles().getFirst().getBehaviour());
+        // 三叉杖的三发散射与贯日长杖的一发穿透同时出现。
+        assertEquals(4, attacks.getProjectiles().size());
+        assertEquals(1, attacks.getProjectiles().stream()
+                .filter(projectile -> projectile.getBehaviour() == Projectile.Behaviour.PIERCE).count());
+        assertEquals(3, attacks.getProjectiles().stream()
+                .filter(projectile -> projectile.getBehaviour() == Projectile.Behaviour.VANILLA).count());
         assertEquals(0.0, player.getEquipmentDamageBonus(), EPS,
                 "改变攻击方式的武器不再额外贡献百分比伤害加成");
     }
@@ -265,7 +269,7 @@ class WeaponAttackProfileTest {
         assertTrue(attacks.getProjectiles().isEmpty(), "影界不该出现光弹");
         assertEquals(GameConfig.SHADOW_MELEE_ARC_DEGREES, attacks.getMeleeArcDegrees(), EPS,
                 "回到影界的基础扇形");
-        assertEquals(1.0, attacks.getCurrentProfile().coefficient(0), EPS, "基础影斩伤害 1.00");
+        assertEquals(1.20, attacks.getCurrentProfile().coefficient(0), EPS, "基础影斩伤害 1.20");
     }
 
     @Test
@@ -284,7 +288,7 @@ class WeaponAttackProfileTest {
     }
 
     @Test
-    void attackChargeIsConsumedOncePerRoundNotPerPellet() {
+    void weaponPelletsDoNotConsumeSkillEnergy() {
         // 设计文档：「每次攻击」指成功启动的一轮攻击，不是每颗弹丸。
         Player player = lightPlayer(EquipmentType.PRISM_FAN_WAND);
         PlayerAttackSystem attacks = new PlayerAttackSystem();
@@ -292,6 +296,92 @@ class WeaponAttackProfileTest {
 
         attacks.tryAttack(player, 200.0, 100.0);
 
-        assertEquals(before - 1, player.getAttackCharges(), "三发散射只算一轮攻击");
+        assertEquals(before, player.getSkillEnergy(), "普攻散射不消耗技能蓝条");
     }
+    @Test
+    void combinedLightWeaponsKeepIndependentPelletsDelaysAndMaximumCooldown() {
+        Player player = lightPlayer(EquipmentType.PRISM_FAN_WAND,
+                EquipmentType.SOLAR_BURST_STAFF, EquipmentType.ECLIPSE_RELAY);
+        PlayerAttackSystem attacks = new PlayerAttackSystem();
+        assertTrue(attacks.tryAttack(player, 200, 100));
+        assertEquals(3, attacks.getCurrentProfiles().size());
+        assertEquals(5, attacks.getProjectiles().size());
+        assertEquals(1, attacks.getPendingCount());
+        assertEquals(GameConfig.LIGHT_ATTACK_COOLDOWN * 1.45, attacks.getCooldownRemaining(), EPS);
+        assertFalse(attacks.tryAttack(player, 200, 100));
+        assertEquals(1, attacks.getWorldAttackCount());
+        player.setPosition(500, 500);
+        attacks.update(0.101);
+        assertEquals(6, attacks.getProjectiles().size());
+        Projectile delayed = attacks.getProjectiles().getLast();
+        assertEquals(0.55, delayed.getDamageCoefficient(), EPS);
+        assertEquals(100, delayed.getY(), EPS);
+        assertTrue(delayed.getX() < 200, "延迟弹体应保留原出手位置");
+        assertEquals(0, attacks.getPendingCount());
+    }
+
+    @Test
+    void mixedShadowWeaponsKeepProjectileImmediateAndDelayedWindows() {
+        Player player = shadowPlayer(EquipmentType.RETURNING_FANG,
+                EquipmentType.CRESCENT_REAPER, EquipmentType.NIGHTFALL_GREATSWORD);
+        PlayerAttackSystem attacks = new PlayerAttackSystem();
+        assertTrue(attacks.tryAttack(player, 200, 100));
+        assertEquals(1, attacks.getProjectiles().size());
+        assertEquals(Projectile.Behaviour.RETURN, attacks.getProjectiles().getFirst().getBehaviour());
+        assertEquals(1, attacks.getMeleeStrikes().size());
+        assertEquals(360, attacks.getMeleeStrikes().getFirst().arcDegrees(), EPS);
+        assertEquals(1, attacks.getPendingCount());
+        assertEquals(Math.max(0.50, GameConfig.SHADOW_ATTACK_COOLDOWN * 1.65),
+                attacks.getCooldownRemaining(), EPS);
+        player.setPosition(500, 500);
+        attacks.update(0.181);
+        assertEquals(1, attacks.getMeleeStrikes().size());
+        var delayed = attacks.getMeleeStrikes().getFirst();
+        assertEquals(40, delayed.arcDegrees(), EPS);
+        assertEquals(1.60, delayed.coefficient(), EPS);
+        assertEquals(100, delayed.x(), EPS);
+        assertEquals(100, delayed.y(), EPS);
+        assertEquals(0, delayed.angleRadians(), EPS);
+    }
+
+    @Test
+    void duplicateWeaponsStackPelletsAndDelayedAttacksWithoutMultiplyingCooldown() {
+        Player player = lightPlayer(EquipmentType.ECLIPSE_RELAY, EquipmentType.ECLIPSE_RELAY);
+        PlayerAttackSystem attacks = new PlayerAttackSystem();
+        assertTrue(attacks.tryAttack(player, 200, 100));
+        assertEquals(2, PlayerAttackSystem.activeWeapons(player).size());
+        assertEquals(2, attacks.getProjectiles().size());
+        assertEquals(2, attacks.getPendingCount());
+        assertEquals(Math.max(0.20, GameConfig.LIGHT_ATTACK_COOLDOWN * 1.20),
+                attacks.getCooldownRemaining(), EPS);
+        attacks.update(0.101);
+        assertEquals(4, attacks.getProjectiles().size());
+        assertTrue(attacks.getProjectiles().stream().allMatch(p -> p.getDamageCoefficient() == 0.55));
+        assertEquals(1, attacks.getWorldAttackCount());
+    }
+
+    @Test
+    void duplicateMeleeWindowsAndReslashesHaveIndependentHitRecords() {
+        Player player = shadowPlayer(EquipmentType.ECLIPSE_RELAY, EquipmentType.ECLIPSE_RELAY);
+        PlayerAttackSystem attacks = new PlayerAttackSystem();
+        attacks.tryAttack(player, 200, 100);
+        var initial = attacks.getMeleeStrikes();
+        assertEquals(2, initial.size());
+        assertNotEquals(initial.getFirst().attackId(), initial.getLast().attackId());
+        for (var strike : initial) assertTrue(attacks.registerMeleeHit(strike.attackId(), "enemy"));
+        for (var strike : initial) assertFalse(attacks.registerMeleeHit(strike.attackId(), "enemy"));
+        attacks.update(0.221);
+        assertEquals(2, attacks.getMeleeStrikes().size());
+        for (var strike : attacks.getMeleeStrikes()) {
+            assertEquals(0.45, strike.coefficient(), EPS);
+            assertTrue(attacks.registerMeleeHit(strike.attackId(), "enemy"));
+        }
+        attacks.clearTransientAttacks();
+        assertTrue(attacks.getMeleeStrikes().isEmpty());
+        assertEquals(0, attacks.getPendingCount());
+        attacks.reset();
+        assertEquals(0, attacks.getWorldAttackCount());
+        assertEquals(0, attacks.getMeleeReleaseCount());
+    }
+
 }

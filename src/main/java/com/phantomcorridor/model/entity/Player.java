@@ -50,8 +50,16 @@ public final class Player {
     private WorldType currentWorld;
     private PlayerAnimationState animationState;
     private double animationTime;
+    private double walkDistance;
+    /** Two footfalls per 100 world pixels; the phase survives stopping and turning. */
+    public void advanceWalkDistance(double distance) {
+        walkDistance = (walkDistance + Math.max(0, distance)) % 100.0;
+    }
     private double attackAnimationRemaining;
     private double attackAnimationWindup;
+    private double abilityAnimationRemaining;
+    private double abilityAnimationDuration;
+    private boolean finisherAnimation;
     private double hitAnimationRemaining;
     private boolean shiftAnimationActive;
     private double shiftAnimationRemaining;
@@ -101,8 +109,12 @@ public final class Player {
         this.currentWorld = WorldType.LIGHT;
         this.animationState = PlayerAnimationState.IDLE;
         this.animationTime = 0.0;
+        this.walkDistance = 0.0;
         this.attackAnimationRemaining = 0.0;
         this.attackAnimationWindup = 0.0;
+        this.abilityAnimationRemaining = 0.0;
+        this.abilityAnimationDuration = 0.0;
+        this.finisherAnimation = false;
         this.hitAnimationRemaining = 0.0;
         this.shiftAnimationActive = false;
         this.shiftAnimationRemaining = 0.0;
@@ -133,6 +145,7 @@ public final class Player {
      */
     public double movementSpeed() {
         double speed = GameConfig.PLAYER_BASE_SPEED * (isShiftSlowed() ? GameConfig.BASIC_SHIFT_SPEED : 1.0);
+        if (abilityAnimationRemaining > 0) speed *= 0.5;
         if (currentWorld != WorldType.SHADOW) return speed;
         speed *= GameConfig.SHADOW_SPEED_MULTIPLIER
                 * (1.0 + equipmentCount(EquipmentType.DUSK_CLOAK) * 0.10);
@@ -152,7 +165,7 @@ public final class Player {
      * @return 是否真的开始冲刺：冷却未好、已在冲刺中或已阵亡时返回 {@code false}
      */
     public boolean tryStartDash(double directionX, double directionY) {
-        if (hp <= 0 || isDashing() || dashCooldownRemaining > 0.0) return false;
+        if (hp <= 0 || isCastingAbility() || isDashing() || dashCooldownRemaining > 0.0) return false;
         double length = Math.hypot(directionX, directionY);
         if (length > 0.0) {
             dashDirectionX = directionX / length;
@@ -229,6 +242,11 @@ public final class Player {
         phaseEnergy = clamp(phaseEnergy + Math.max(0.0, amount), 0.0, GameConfig.PHASE_ENERGY_MAX);
     }
 
+    /** 当前可用于终结技/强化切界的完整相位碎片数（每 10 点能量折算一枚）。 */
+    public int getPhaseFragments() {
+        return (int) Math.floor(phaseEnergy / GameConfig.PHASE_ENERGY_PER_FRAGMENT + 1e-9);
+    }
+
     public void consumePhaseEnergy(double amount) {
         phaseEnergy = clamp(phaseEnergy - Math.max(0.0, amount), 0.0, GameConfig.PHASE_ENERGY_MAX);
     }
@@ -262,8 +280,9 @@ public final class Player {
         }
     }
     public void increaseAttackChargeCapacity(int amount) {
-        maxAttackCharges = Math.max(GameConfig.ATTACK_CHARGE_MAX, maxAttackCharges + Math.max(0, amount));
-        attackCharges = maxAttackCharges;
+        int added = Math.max(0, amount);
+        maxAttackCharges += added;
+        attackCharges = Math.min(maxAttackCharges, attackCharges + added);
     }
     public void addItem(ItemType item) {
         if (item == null || items.contains(item)) return;
@@ -342,6 +361,24 @@ public final class Player {
         animationTime = 0.0;
     }
 
+    public int getSkillEnergy() { return attackCharges; }
+    public int getMaxSkillEnergy() { return maxAttackCharges; }
+    public void updateSkillEnergy(double dt) { updateAttackCharges(dt); }
+    public boolean isCastingAbility() { return abilityAnimationRemaining > 0; }
+    public boolean consumeSkillEnergy(int amount) {
+        if (amount <= 0 || attackCharges < amount) return false;
+        attackCharges -= amount;
+        return true;
+    }
+    public void cancelAbilityAnimation() { abilityAnimationRemaining = 0; }
+    public void startAbilityAnimation(boolean finisher, double x, double y, double duration) {
+        startAttackAnimation(x, y, 0);
+        attackAnimationRemaining = 0;
+        abilityAnimationRemaining = abilityAnimationDuration = duration;
+        finisherAnimation = finisher;
+        animationState = finisher ? PlayerAnimationState.FINISHER : PlayerAnimationState.SKILL;
+    }
+
     /** Compatibility entry point: held attack input no longer drives the body animation. */
     public void updateAnimation(double dt, double movementX, double movementY, boolean attackHeld,
                                 boolean shifting) {
@@ -353,6 +390,7 @@ public final class Player {
         hitInvulnerability = Math.max(0.0, hitInvulnerability - Math.max(0.0, dt));
         hitFlashRemaining = Math.max(0.0, hitFlashRemaining - Math.max(0.0, dt));
         updateTemporaryEffects(dt);
+        abilityAnimationRemaining = Math.max(0, abilityAnimationRemaining - Math.max(0, dt));
         attackAnimationRemaining = Math.max(0.0, attackAnimationRemaining - Math.max(0.0, dt));
         hitAnimationRemaining = Math.max(0.0, hitAnimationRemaining - Math.max(0.0, dt));
         shiftAnimationRemaining = Math.max(0.0, shiftAnimationRemaining - Math.max(0.0, dt));
@@ -363,8 +401,8 @@ public final class Player {
         if (hp <= 0) attackAnimationRemaining = 0.0;
         animationTime += Math.max(0.0, dt);
         // 冲刺中朝向锁在冲刺方向上：拖尾与角色朝向必须一致，否则拖尾会"横着飘"。
-        double lookX = isDashing() ? dashDirectionX : attackAnimationRemaining > 0 ? 0 : movementX;
-        double lookY = isDashing() ? dashDirectionY : attackAnimationRemaining > 0 ? 0 : movementY;
+        double lookX = isDashing() ? dashDirectionX : attackAnimationRemaining > 0 || abilityAnimationRemaining > 0 ? 0 : movementX;
+        double lookY = isDashing() ? dashDirectionY : attackAnimationRemaining > 0 || abilityAnimationRemaining > 0 ? 0 : movementY;
         if (lookX != 0.0 || lookY != 0.0) {
             double length = Math.hypot(lookX, lookY);
             facingX = lookX / length;
@@ -372,6 +410,7 @@ public final class Player {
         }
         PlayerAnimationState next = hp <= 0 ? PlayerAnimationState.DOWN
                 : isDashing() ? PlayerAnimationState.DASHING
+                : abilityAnimationRemaining > 0 ? (finisherAnimation ? PlayerAnimationState.FINISHER : PlayerAnimationState.SKILL)
                 : shiftAnimationRemaining > 0 ? PlayerAnimationState.SHIFTING
                 : hitAnimationRemaining > 0 ? PlayerAnimationState.HIT
                 : attackAnimationRemaining > 0 ? PlayerAnimationState.ATTACKING
@@ -426,7 +465,7 @@ public final class Player {
      * 依然会把剩下的 10 点实打实送进生命条。
      *
      * <p>受击后有一段短暂无敌，避免同帧的重叠弹幕重复扣血；
-     * 无敌期间连护盾也不会被消耗。被击会获得少量相位能量（§3.4）。
+     * 无敌期间连护盾也不会被消耗。受击不提供相位收益。
      *
      * @param damage 伤害点数（可以带小数；打进生命值时向上取整，保证任何非零伤害都至少掉 1 点）
      * @return 本次受击的结算明细；未生效时返回 {@code null}
@@ -693,8 +732,16 @@ public final class Player {
         double multiplier = 1.0;
         if (world == WorldType.LIGHT) {
             multiplier *= Math.pow(1.15, equipmentCount(EquipmentType.FOCUS_LENS));
+        } else if (world == WorldType.SHADOW) {
+            // 影牙短刃的旧版属性：影斩冷却 -10%，同名装备按件数叠加。
+            multiplier *= Math.pow(0.90, equipmentCount(EquipmentType.SHADOW_FANG));
         }
         return multiplier * gyroscopeMultiplier();
+    }
+
+    /** 基础光弹的速度倍率（晨曦法杖的旧版属性，同名按件数叠加）。 */
+    public double lightProjectileSpeedMultiplier() {
+        return Math.pow(1.10, equipmentCount(EquipmentType.DAWN_WAND));
     }
 
     /**
@@ -796,6 +843,12 @@ public final class Player {
     public PlayerAnimationState getAnimationState() { return animationState; }
     public double getAnimationTime() { return animationTime; }
     public double getBodyAnimationTime() {
+        if (animationState == PlayerAnimationState.MOVING) return walkDistance / 100.0;
+        if (animationState == PlayerAnimationState.FINISHER || animationState == PlayerAnimationState.SKILL) {
+            String action = finisherAnimation ? "finisher_cast" : "attack";
+            double clipDuration = PlayerAnimationCatalog.clip(currentWorld == WorldType.LIGHT ? "light" : "shadow", action, "down").duration();
+            return animationTime / Math.max(0.001, abilityAnimationDuration) * clipDuration;
+        }
         return animationState == PlayerAnimationState.ATTACKING
                 ? Math.max(0, animationTime - attackAnimationWindup) : animationTime;
     }
