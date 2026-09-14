@@ -504,6 +504,75 @@ public final class GameConfig {
     @Deprecated
     public static final double PHASE_ENERGY_PER_KILL = 3.0;
 
+    // ---- 形态右键机制：光形态蓄力 / 影形态格挡 ----
+    /**
+     * 光形态蓄力的满蓄时间（秒）。
+     *
+     * <p>按住右键蓄力：这段时间内伤害从 1 倍线性涨到 {@link #LIGHT_CHARGE_MAX_MULTIPLIER} 倍，
+     * 同时移速被压到 {@link #LIGHT_CHARGE_MOVE_MULTIPLIER}。蓄力要付出机动性代价，
+     * 所以它不能像普攻一样边走边放。
+     */
+    public static final double LIGHT_CHARGE_MAX_TIME = 1.5;
+
+    /** 光形态蓄力的最短蓄力时间（秒）：短于它视为误触，不发射也不扣能量。 */
+    public static final double LIGHT_CHARGE_MIN_TIME = 0.15;
+
+    /** 光形态蓄满时的伤害倍率（相对同一次攻击方案）：1 → 该值 线性增长。 */
+    public static final double LIGHT_CHARGE_MAX_MULTIPLIER = 5.0;
+
+    /** 蓄力期间的移动速度倍率。 */
+    public static final double LIGHT_CHARGE_MOVE_MULTIPLIER = 0.5;
+
+    /** 每次蓄力发射消耗的技能能量（固定值，不看蓄力时长）。 */
+    public static final int LIGHT_CHARGE_ENERGY_COST = 2;
+
+    /** 蓄力光弹的弹体半径倍率：比普攻明显更大，读得出"这一发很重"。 */
+    public static final double LIGHT_CHARGE_RADIUS_SCALE = 1.7;
+
+    /**
+     * 蓄满的光弹最多能穿透几个敌人。
+     *
+     * <p>取一个远大于同屏敌人数的值来表达"无限穿透"：弹体最终仍会因寿命或撞墙消失，
+     * 不需要真的改成不可耗尽，也避免出现数值溢出这类边界。
+     */
+    public static final int LIGHT_CHARGE_PIERCE_MAX = 999;
+
+    /**
+     * 蓄满的光弹命中时给敌人叠几层灼痕。
+     *
+     * <p>普攻一次只叠一层（打满三层要三发），蓄满这一发直接叠满，
+     * 于是"蓄满 → 切影界引爆"成为一条可用的连招。
+     */
+    public static final int LIGHT_CHARGE_SCORCH_STACKS = 3;
+
+    /**
+     * 影形态格挡（右键）的无敌窗口时长（秒）。
+     *
+     * <p>窗口内完全免伤；窗口内**首次**挡下伤害会授予"强化下一次暗影普攻"。
+     */
+    public static final double SHADOW_BLOCK_DURATION = 1.5;
+
+    /** 影形态格挡启动需要的技能能量（"需要五格"）。 */
+    public static final int SHADOW_BLOCK_ENERGY_COST = 5;
+
+    /** 格挡成功（挡下一次伤害）时返还的能量：等于消耗，也就是"挡住就不花"。 */
+    public static final int SHADOW_BLOCK_ENERGY_REFUND = 5;
+
+    /** 格挡成功后强化下一次暗影普攻的伤害倍率。 */
+    public static final double SHADOW_BLOCK_EMPOWER_MULTIPLIER = 10.0;
+
+    /**
+     * 每次挡下攻击后，屏幕边缘「格挡」提示的显示时间（秒）。
+     *
+     * <p>窗口内每次挡下都会把这条提示重新点燃，所以连续挨打时它会一直亮着，
+     * 玩家能立刻分辨「这一下被挡住了」而不是「没打中我」。
+     */
+    public static final double SHADOW_BLOCK_FLASH_TIME = 0.55;
+
+    // ---- 敌人攻击预警 ----
+    /** 敌人出招前多少秒在头顶冒出红色感叹号（0.5 秒可反应窗口）。 */
+    public static final double ENEMY_ATTACK_WARNING_LEAD = 0.5;
+
     /** 切换世界后的冷却时间（秒，占位；§3.3"切换后进入冷却恢复期"） */
     public static final double WORLD_SWITCH_COOLDOWN = 0.3;
     public static final double BASIC_SHIFT_SLOW_TIME = 0.3;

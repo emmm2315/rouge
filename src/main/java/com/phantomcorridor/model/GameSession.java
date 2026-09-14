@@ -38,6 +38,19 @@ public final class GameSession {
     private double aimY;
     private double visualTime;
     public double getVisualTime() { return visualTime; }
+    /**
+     * 本局实际游玩用时（秒）。
+     *
+     * <p>与 {@link #visualTime} 分开：{@code visualTime} 是给动画用的模拟时钟（传送门流光、
+     * 相位脉冲），通关后依然要走；而"用时"必须在本局结束（通关 / 阵亡）那一刻停住。
+     * 两者混用会让结算界面的计时一直涨下去——这就是"穿越完成后用时不会停下"的根因。
+     */
+    private double runTime;
+    /** 右键按住状态：光形态=蓄力中，影形态=刚按下时开启格挡窗口。 */
+    private boolean secondaryHeld;
+    private boolean secondaryWasHeld;
+    /** 左键上一帧的按住状态：蓄力中按左键也要发射，所以要检测按下边沿。 */
+    private boolean attackWasHeld;
     private int totalKills;
     private String roomAnnouncement = "";
     private double roomAnnouncementRemaining;
@@ -64,6 +77,10 @@ public final class GameSession {
         player.reset(AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0);
         worldShift.reset();
         visualTime = 0;
+        runTime = 0;
+        secondaryHeld = false;
+        secondaryWasHeld = false;
+        attackWasHeld = false;
         totalKills = 0;
         abilities.reset();
         runSeed = MapGenerator.parseSeed(configuredSeed);
@@ -100,6 +117,9 @@ public final class GameSession {
         // 护盾是“一层一条”的临时生命：进新一层时重置为一整条，层内打完就没有，
         // 既不会像回血那样无限续航，也保证每层开局都有一条可用的容错。
         player.refillShield();
+        // 形态右键机制不带过层：蓄力与格挡窗口都在新一层重新开始。
+        player.cancelCharge();
+        player.clearBlock();
         phasePulseVisibleRemaining = 0.0;
         // combatActive = false;   // 见字段处的说明：这个状态没有任何读取点
         roomAnnouncement = floorAnnouncement();
@@ -122,10 +142,15 @@ public final class GameSession {
     public void update(double dt, double movementX, double movementY,
                        double targetX, double targetY, boolean attacking) {
         visualTime += Math.max(0, dt);
+        // 本局"用时"只在本局还没结束时累计：通关 / 阵亡之后必须停住，
+        // 否则结算界面的计时会一直涨（bug：穿越完成后用时不会停下）。
+        if (player.getHp() > 0 && !runCleared) runTime += Math.max(0, dt);
         worldShift.update(dt);
         phasePulseVisibleRemaining = Math.max(0.0, phasePulseVisibleRemaining - dt);
         roomAnnouncementRemaining = Math.max(0.0, roomAnnouncementRemaining - Math.max(0.0, dt));
         if (player.getHp() <= 0 || runCleared) {
+            player.cancelCharge();
+            player.clearBlock();
             abilities.clearRoomEffects();
             player.cancelAbilityAnimation();
             player.updateDash(dt);
@@ -134,13 +159,16 @@ public final class GameSession {
         }
         aimX = targetX;
         aimY = targetY;
+        // 形态右键机制在移动之前结算：蓄力会压低移速，必须当帧生效。
+        updateStance(attacking);
         navigation.setHiddenExitLocked(isInCombat());
         double movementStartX = player.getX();
         double movementStartY = player.getY();
         // 冲刺优先于普通移动：冲刺期间忽略方向输入，位移完全由冲刺方向决定。
         if (dashRequested) {
             dashRequested = false;
-            if (!abilities.isCasting()) player.tryStartDash(movementX, movementY);
+            // 冲刺是保命动作，优先级高于蓄力：真的冲出去就把这次蓄力放掉（没冲成不惩罚）。
+            if (!abilities.isCasting() && player.tryStartDash(movementX, movementY)) player.cancelCharge();
         }
         if (player.isDashing()) {
             // 只走"这一段冲刺还剩的时间"：否则最后一帧会按整帧位移，固定 150 像素会随帧对齐漂移。
@@ -159,6 +187,9 @@ public final class GameSession {
             abilities.clearRoomEffects();
             player.cancelAbilityAnimation();
             attackSystem.clearTransientAttacks();
+            // 换房时形态右键机制一并清空：格挡窗口不该跨房间留着，强化也不该带到下一间。
+            player.cancelCharge();
+            player.clearBlock();
             Room entered = navigation.getCurrentRoom();
             roomContent.enterRoom(entered, player);
             enemies.enterRoom(entered, dungeonSeed, player, navigation);
@@ -206,7 +237,8 @@ public final class GameSession {
         }
         player.restorePhaseEnergy(phaseEnergyRegenRate() * dt);
         player.updateSkillEnergy(dt);
-        if (attacking && !abilities.isCasting()) {
+        // 蓄力期间左键不再是普攻：它的语义是"把这一发蓄力弹打出去"（见 updateStance）。
+        if (attacking && !abilities.isCasting() && !player.isCharging()) {
             attackSystem.tryAttack(player, aimX, aimY);
         }
         // Animation follows actual movement and successful attack events, not held input.
@@ -226,21 +258,85 @@ public final class GameSession {
         return GameConfig.PHASE_ENERGY_REGEN_PER_SEC * multiplier;
     }
 
+    /**
+     * 推进形态右键机制：光形态蓄力、影形态格挡。
+     *
+     * <p>右键的语义按当前形态切换：
+     * <ul>
+     *   <li><b>光形态</b>：按住蓄力（伤害 1 → 5 倍线性增长、移速 ×0.5），
+     *       松开右键 / 蓄满 / 按下左键 三种时机都能把这一发打出去；</li>
+     *   <li><b>影形态</b>：按下即开启 1.5 秒的格挡窗口，窗口内完全免伤，
+     *       首次挡下伤害会攒下一次"强化暗影普攻"（×10）。</li>
+     * </ul>
+     *
+     * <p>按下/松开的边沿检测放在这里而不是输入层：控制器只该上报"右键是否按着"，
+     * "松开才发射"属于玩法规则，不属于输入转发。
+     */
+    private void updateStance(boolean attacking) {
+        boolean pressed = secondaryHeld && !secondaryWasHeld;
+        boolean released = !secondaryHeld && secondaryWasHeld;
+        secondaryWasHeld = secondaryHeld;
+        boolean attackPressed = attacking && !attackWasHeld;
+        attackWasHeld = attacking;
+
+        if (player.getCurrentWorld() != WorldType.LIGHT) {
+            // 影形态：一次按下开一次窗口，长按不会反复触发（窗口本身最长 1.5 秒）。
+            if (pressed) player.beginBlock();
+            return;
+        }
+        if (pressed) player.beginCharge();
+        if (!player.isCharging()) return;
+        // 蓄满自动发射：玩家不需要盯着进度条掐点松手，蓄满就是"已经准备好"。
+        if (released || player.isChargeFull() || attackPressed) fireChargedShot();
+    }
+
+    /** 把当前蓄力打出去；不足最短蓄力时间视为误触，直接放弃且不扣能量。 */
+    private void fireChargedShot() {
+        if (!player.isChargeFireable()) {
+            player.cancelCharge();
+            return;
+        }
+        // 是否蓄满要在扣能量之前取：蓄满那一发带无限穿透与叠满灼痕。
+        boolean fullCharge = player.isChargeFull();
+        double multiplier = player.consumeCharge();
+        if (multiplier <= 0.0) return;
+        if (!attackSystem.fireChargedShot(player, aimX, aimY, multiplier, fullCharge)) {
+            // 打不出去（施法中 / 冲刺中）：把已经扣掉的能量退回来，不能白花蓝量。
+            player.restoreAttackCharges(GameConfig.LIGHT_CHARGE_ENERGY_COST);
+        }
+    }
+
+    /**
+     * 控制器每帧上报右键是否按着。
+     *
+     * <p>只传"当前状态"，不传事件：这样暂停、失焦、鼠标移出窗口都只是把状态置回 false，
+     * 不会留下"以为还按着"的悬空状态。
+     */
+    public void setSecondaryHeld(boolean held) { secondaryHeld = held; }
+
+    /** 本局实际游玩用时（秒）；通关 / 阵亡后停止累计。 */
+    public double getRunTime() { return runTime; }
+
     public boolean tryShiftWorld() {
         return tryShiftWorld(false);
     }
 
     public boolean tryUseAbility(boolean finisher, double targetX, double targetY) {
         if (runCleared || getPendingEquipment() != null) return false;
-        return finisher
+        boolean cast = finisher
                 ? abilities.tryCastFinisher(player, targetX, targetY, navigation)
                 : abilities.tryCast(player, 0, targetX, targetY, navigation);
+        // 施法与蓄力互斥：真的放出技能就把这次蓄力放弃，避免两个动作叠在同一帧。
+        if (cast) player.cancelCharge();
+        return cast;
     }
 
     /** 释放第二个形态技能；技能槽 0 仍由旧的 Q 接口兼容。 */
     public boolean tryUseSkill(int skillIndex, double targetX, double targetY) {
         if (runCleared || getPendingEquipment() != null) return false;
-        return abilities.tryCast(player, skillIndex, targetX, targetY, navigation);
+        boolean cast = abilities.tryCast(player, skillIndex, targetX, targetY, navigation);
+        if (cast) player.cancelCharge();
+        return cast;
     }
 
     /** 统一命名的重载，供 UI/自动化输入按技能槽调用。 */
@@ -270,6 +366,10 @@ public final class GameSession {
         }
         // 切界成功：打开相位陀螺的攻速窗口，并结束夜行披风的影界加速。
         attackSystem.cancelForWorldShift();
+        // 形态右键机制跟不上切界：蓄力直接放掉，格挡的无敌窗口也立刻结束
+        // （已经攒下的"强化暗影普攻"保留——它本来就是留给下一次暗影普攻的）。
+        player.cancelCharge();
+        player.endBlockWindow();
         player.onWorldShifted();
         enemies.onWorldChanged(player.getCurrentWorld());
         return true;

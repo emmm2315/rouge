@@ -3,8 +3,8 @@ package com.phantomcorridor.controller;
 import com.phantomcorridor.core.GameLoop;
 import com.phantomcorridor.model.GameSession;
 import com.phantomcorridor.view.GameView;
+import com.phantomcorridor.view.SettlementButtons;
 import javafx.scene.input.KeyCode;
-import com.phantomcorridor.config.AppConfig;
 import com.phantomcorridor.config.Settings;
 import java.util.function.Consumer;
 
@@ -20,6 +20,8 @@ public final class GameController {
     private boolean shiftHeld;
     private boolean interactHeld;
     private boolean attackHeld;
+    /** 右键按住状态：光形态=蓄力，影形态=按下瞬间开启格挡。 */
+    private boolean secondaryHeld;
     private boolean dashHeld;
     private boolean skillHeld, skill2Held, finisherHeld, modifierHeld;
     private double aimX;
@@ -48,7 +50,9 @@ public final class GameController {
             @Override
             protected void update(double dt) {
                 // 替换选择面板是模态的：面板开着时不推进攻击，玩家的手不需要在“选槽位”和“松开鼠标”之间分心。
-                boolean attacking = attackHeld && session.getPendingEquipment() == null;
+                boolean panelOpen = session.getPendingEquipment() != null;
+                boolean attacking = attackHeld && !panelOpen;
+                session.setSecondaryHeld(secondaryHeld && !panelOpen);
                 session.update(dt, input.horizontal(), input.vertical(), aimX, aimY, attacking);
                 GameController.this.onSessionUpdated.accept(session);
             }
@@ -59,6 +63,7 @@ public final class GameController {
         };
         view.bindInput(this::keyPressed, this::keyReleased);
         view.bindPointer(this::pointerMoved, held -> attackHeld = held);
+        view.bindSecondary(held -> secondaryHeld = held);
         view.bindClick(this::pointerClicked);
         view.bindLifecycle(this::start, this::stop);
         session.newRun(settings.getDevSeed());
@@ -70,6 +75,8 @@ public final class GameController {
         shiftHeld = false;
         interactHeld = false;
         attackHeld = false;
+        secondaryHeld = false;
+        session.setSecondaryHeld(false);
         dashHeld = false;
         skillHeld = skill2Held = finisherHeld = modifierHeld = false;
         aimX = session.getPlayer().getX() + 1.0;
@@ -94,17 +101,15 @@ public final class GameController {
         shiftHeld = false;
         interactHeld = false;
         attackHeld = false;
+        secondaryHeld = false;
+        session.setSecondaryHeld(false);
         dashHeld = false;
         skillHeld = skill2Held = finisherHeld = modifierHeld = false;
     }
 
     private void keyPressed(KeyCode key) {
-        if (session.getPlayer().getHp() <= 0) {
-            // 死亡结算保持“只能点击按钮”的交互约定。
-            return;
-        }
-        // 通关结算沿用上游的快捷重开/返回主菜单。
-        if (session.isRunCleared()) {
+        // 结算界面（阵亡 / 通关）统一：R 重开一局、M 返回主菜单，键盘与鼠标两种方式都能选。
+        if (isRunOver()) {
             if (key == KeyCode.R) newRun();
             else if (key == KeyCode.M) onMainMenu.run();
             return;
@@ -193,15 +198,22 @@ public final class GameController {
         aimY = y;
     }
 
+    /**
+     * 本局是否已经结束（阵亡或通关）。
+     *
+     * <p>结算界面同时接受键盘（R / M）与鼠标点击，两种方式等价——
+     * 玩家不需要先猜"这一屏认哪个输入"。
+     */
+    private boolean isRunOver() {
+        return session.isRunCleared() || session.getPlayer().getHp() <= 0;
+    }
+
     private void pointerClicked(double x, double y) {
-        if (session.getPlayer().getHp() > 0) return;
-        double centerX = AppConfig.VIEW_WIDTH / 2.0;
-        double centerY = AppConfig.VIEW_HEIGHT / 2.0;
-        double buttonY = centerY + 44.0;
-        if (y < buttonY || y > buttonY + 50.0) return;
-        if (x >= centerX - 170.0 && x <= centerX - 30.0) {
+        if (!isRunOver()) return;
+        // 命中判定与渲染共用 SettlementButtons 里同一份矩形，避免"看到的按钮"与"点得中的位置"错位。
+        if (SettlementButtons.RESTART.contains(x, y)) {
             newRun();
-        } else if (x >= centerX + 30.0 && x <= centerX + 170.0) {
+        } else if (SettlementButtons.MAIN_MENU.contains(x, y)) {
             onMainMenu.run();
         }
     }

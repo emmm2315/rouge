@@ -2,6 +2,7 @@ package com.phantomcorridor.model.combat;
 
 import com.phantomcorridor.config.AppConfig;
 import com.phantomcorridor.config.GameConfig;
+import com.phantomcorridor.model.Difficulty;
 import com.phantomcorridor.model.RoomType;
 import com.phantomcorridor.model.WorldType;
 import com.phantomcorridor.model.dungeon.DungeonMap;
@@ -427,6 +428,72 @@ class EnemySystemTest {
         int frames = (int) Math.round(seconds / DT);
         for (int frame = 0; frame < frames; frame++) {
             system.update(DT, player, new PlayerAttackSystem(), navigation);
+        }
+    }
+
+    @Test
+    void attackWarningLightsUpHalfASecondBeforeTheStrike() {
+        Room room = openRoom(3, RoomType.BATTLE);
+        RoomNavigationSystem navigation = navigationFor(room);
+        Player player = new Player(600, 600);
+        EnemySystem system = new EnemySystem();
+        Enemy enemy = system.spawnForTest(EnemyKind.MAGE, WorldType.LIGHT, 1, Difficulty.NORMAL);
+        enemy.setPosition(600, 300);
+        EnemySkill skill = EnemySkill.MAGE_FAN;
+        system.castForTest(enemy, player, skill);
+
+        assertFalse(enemy.isAttackWarning(), "刚起手时前摇还长，不该提前预警");
+
+        double warnAt = -1.0;
+        double elapsed = 0.0;
+        for (int frame = 0; frame < 200; frame++) {
+            system.update(DT, player, new PlayerAttackSystem(), navigation);
+            elapsed += DT;
+            if (warnAt < 0.0 && enemy.isAttackWarning()) warnAt = elapsed;
+            if (enemy.getAnimationAction().contains("_release")) {
+                // 出招那一帧读到的可能还是上一帧的 true，再走一帧确认它真的熄灭了。
+                system.update(DT, player, new PlayerAttackSystem(), navigation);
+                break;
+            }
+        }
+
+        assertTrue(warnAt > 0.0, "前摇结束前必须点亮红色感叹号");
+        assertEquals(skill.windup() - GameConfig.ENEMY_ATTACK_WARNING_LEAD, warnAt, 2 * DT,
+                "感叹号只该出现在结算前 0.5 秒内");
+        assertFalse(enemy.isAttackWarning(), "出招之后感叹号必须熄灭，不能挂着一个已经打完的预警");
+    }
+
+    @Test
+    void aFullChargeShotPiercesAndMaxesOutScorchOnTheTarget() {
+        Room room = openRoom(3, RoomType.BATTLE);
+        RoomNavigationSystem navigation = navigationFor(room);
+        Player player = new Player(300, 600);
+        EnemySystem system = new EnemySystem();
+        Enemy target = system.spawnForTest(EnemyKind.GOLEM, WorldType.LIGHT, 1, Difficulty.NORMAL);
+        // 让受击框中心与玩家同高：受击框整体在脚下落点上方，不这样摆直线打不中。
+        target.setPosition(700, 651);
+
+        PlayerAttackSystem playerAttacks = new PlayerAttackSystem();
+        assertTrue(playerAttacks.fireChargedShot(player, target.getHitboxCenterX(),
+                target.getHitboxCenterY(), GameConfig.LIGHT_CHARGE_MAX_MULTIPLIER, true));
+
+        Projectile shot = playerAttacks.getProjectiles().getFirst();
+        assertEquals(Projectile.Behaviour.PIERCE, shot.getBehaviour(), "蓄满的光弹应当无限穿透");
+        assertEquals(GameConfig.LIGHT_CHARGE_SCORCH_STACKS, shot.getScorchStacks(),
+                "蓄满的那一发要带上满层灼痕的载荷");
+
+        // 弹体推进归玩家攻击系统管：EnemySystem 只做命中判定，不替它移动。
+        for (int frame = 0; frame < 120 && target.getScorchStacks() == 0; frame++) {
+            playerAttacks.update(DT, navigation);
+            system.update(DT, player, playerAttacks, navigation);
+        }
+
+        assertEquals(GameConfig.LIGHT_CHARGE_SCORCH_STACKS, target.getScorchStacks(),
+                "蓄满命中一次就该叠满灼痕（普攻要多打几发才够）");
+
+        // 穿透不设上限：连续命中不同目标都应该继续飞。
+        for (int index = 0; index < 6; index++) {
+            assertTrue(shot.registerHit("dummy-" + index), "蓄满的光弹应当能一直穿下去");
         }
     }
 

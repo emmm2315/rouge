@@ -93,6 +93,23 @@ public record AttackProfile(
                 pelletInterval);
     }
 
+    /**
+     * 返回把每个伤害包的系数整体乘一个倍率的副本。
+     *
+     * <p>形态右键机制用它放大整轮伤害：格挡成功后的暗影普攻 ×10、蓄满的光弹 ×5，
+     * 都必须是「当前这一套攻击方案整体变强」，而不是换成另一套写死的数值——
+     * 否则三叉杖的三向、贯日长杖的穿透、夜坠重剑的前摇与扇形会在强化时全部丢掉，
+     * 「装备适配」也就无从谈起。
+     */
+    public AttackProfile withCoefficientScale(double multiplier) {
+        if (multiplier == 1.0) return this;
+        double[] scaled = new double[damageCoefficients.length];
+        for (int i = 0; i < scaled.length; i++) scaled[i] = damageCoefficients[i] * multiplier;
+        return new AttackProfile(world, shape, pellets, spreadDegrees, scaled, extraHits,
+                speedScale, lifetimeScale, radiusScale, cooldownScale, minCooldown,
+                meleeArcDegrees, meleeRangeScale, windup, pelletInterval);
+    }
+
     // ---- 各武器的具体方案 ----
 
     /** 基础光弹：单发、系数 1.0、间隔 1.0。 */

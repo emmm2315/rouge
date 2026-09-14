@@ -292,6 +292,7 @@ public final class EnemySystem {
                 telegraphs.removeIf(telegraph -> telegraph.source() == enemy.getKind());
                 activeCasts.remove(enemy);
                 enemy.endCastGuard();
+                enemy.setAttackWarning(false);
                 // 换形本身不带伤害，但有一段 1.2 秒的收招：玩家要先看清新形态，而不是被瞬发贴脸。
                 enemy.playAnimation("transform", GameConfig.BOSS_TRANSFORM_LOCK, false);
                 enemy.setAlertRemaining(GameConfig.BOSS_TRANSFORM_LOCK);
@@ -301,6 +302,7 @@ public final class EnemySystem {
                 bossCrossedOver = true;
             }
             if (enemy.getAnimationAction().equals("transform") && !enemy.isAnimationFinished()) continue;
+            updateAttackWarning(enemy);
             if (advanceCast(enemy, player, navigation)) continue;
             if (enemy.getAnimationAction().equals("hurt") && !enemy.isAnimationFinished()) continue;
             if (enemy.getAnimationAction().equals("hurt")) enemy.playAnimation("idle", 1.0 / 6.0, true);
@@ -351,6 +353,9 @@ public final class EnemySystem {
         updateTelegraphs(dt, player);
         updateRootWalls(dt, navigation);
         updateSummonRifts(dt, navigation);
+        // 先让蓄力光弹打散挡路的敌方弹幕，再推进敌人攻击——顺序反了的话，
+        // 同帧内已经该被击落的弹体仍然会先判定一次命中。
+        clearBulletsWithChargedShots(playerAttacks);
         updateEnemyAttacks(dt, player, navigation);
         advanceWaves(dt, player, navigation);
     }
@@ -1194,7 +1199,7 @@ public final class EnemySystem {
             return;
         }
         int dealt = applyDamage(player, hit, projectile.getDamageCoefficient(),
-                projectile.getX(), projectile.getY());
+                projectile.getX(), projectile.getY(), true, projectile.getScorchStacks());
         boolean continues = projectile.registerHit(hit);
         if (dealt <= 0) return;
 
@@ -1266,10 +1271,22 @@ public final class EnemySystem {
     }
 
     private int applyDamage(Player player, Enemy enemy, double coefficient, double fromX, double fromY, boolean gainPhase) {
+        return applyDamage(player, enemy, coefficient, fromX, fromY, gainPhase, 1);
+    }
+
+    /**
+     * @param scorchStacks 这一击在光界给敌人叠几层灼痕：普攻 1 层，
+     *                     蓄满的蓄力光弹一次叠满（见 {@link GameConfig#LIGHT_CHARGE_SCORCH_STACKS}）
+     */
+    private int applyDamage(Player player, Enemy enemy, double coefficient, double fromX, double fromY,
+                            boolean gainPhase, int scorchStacks) {
         WorldType world = player.getCurrentWorld();
         int stacks = world == WorldType.SHADOW ? enemy.consumeScorch() : 0;
         if (world == WorldType.LIGHT) {
-            enemy.addScorch();
+            // 逐层调用（而不是直接把层数写成 3）：上限与"重复施加只刷新时长"的规则
+            // 都留在 Enemy 里，这里不重复实现一遍，也不会绕过上限。
+            int added = Math.max(1, scorchStacks);
+            for (int i = 0; i < added; i++) enemy.addScorch();
         }
         coefficient *= enemy.getKind().affinity().damageMultiplier(world, stacks > 0);
         coefficient += stacks * GameConfig.SCORCH_DAMAGE_PER_STACK;
@@ -1763,6 +1780,49 @@ public final class EnemySystem {
         }
         return EnemyVisualEffect.body(enemy.getKind(), WorldType.LIGHT, "transform", enemy.getFacing(),
                 enemy.getX(), enemy.getY(), displayWidth(enemy.getKind()), GameConfig.BOSS_TRANSFORM_LOCK);
+    }
+
+    /**
+     * 刷新敌人的「攻击前 0.5 秒」预警标记。
+     *
+     * <p>只有前摇阶段（{@code stage == 0}）才预警：剩余前摇不足
+     * {@link GameConfig#ENEMY_ATTACK_WARNING_LEAD} 时点亮头顶的红色感叹号。
+     * 进入出招（stage 1）与收招（stage 2）之后这一下已经打出去了，预警随之熄灭——
+     * 否则玩家会被一个"已经打完还在闪"的符号误导。
+     */
+    private void updateAttackWarning(Enemy enemy) {
+        ActiveCast cast = activeCasts.get(enemy);
+        if (cast == null || cast.stage != 0) {
+            enemy.setAttackWarning(false);
+            return;
+        }
+        double remaining = cast.skill.windup() - enemy.getAnimationTime();
+        enemy.setAttackWarning(remaining > 0.0 && remaining <= GameConfig.ENEMY_ATTACK_WARNING_LEAD);
+    }
+
+    /**
+     * 蓄力光弹击落敌方弹幕（"蓄满可以抵消敌人弹幕"的落点）。
+     *
+     * <p>只有带 {@link Projectile#clearsEnemyBullets()} 标记的弹体（即蓄力光弹）参与，
+     * 且只打散素材标记为 {@code pulseClearable} 的敌方弹体——地面判定、本体位移类招式
+     * 没有可以被打散的弹体，和切界脉冲的规则保持一致。光弹自己继续飞：它本来就是清场的那一发。
+     */
+    private void clearBulletsWithChargedShots(PlayerAttackSystem playerAttacks) {
+        if (attacks.isEmpty()) return;
+        List<Projectile> chargers = playerAttacks.getProjectiles().stream()
+                .filter(Projectile::clearsEnemyBullets).toList();
+        if (chargers.isEmpty()) return;
+        for (EnemyAttack attack : attacks) {
+            if (attack.isExpired()) continue;
+            if (attack.getSkill() != null && !attack.getSkill().pulseClearable()) continue;
+            for (Projectile charger : chargers) {
+                if (CollisionUtil.circleIntersectsCircle(charger.getX(), charger.getY(), charger.getRadius(),
+                        attack.getX(), attack.getY(), attack.getRadius())) {
+                    attack.expire();
+                    break;
+                }
+            }
+        }
     }
 
     private boolean advanceCast(Enemy enemy, Player player, RoomNavigationSystem navigation) {

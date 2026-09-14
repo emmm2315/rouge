@@ -31,6 +31,7 @@ public final class GameView extends StackPane implements SceneLifecycle {
     private BiConsumer<Double, Double> pointerMoved = (x, y) -> { };
     private BiConsumer<Double, Double> clicked = (x, y) -> { };
     private Consumer<Boolean> attackChanged = attacking -> { };
+    private Consumer<Boolean> secondaryChanged = held -> { };
     private Runnable enterAction = () -> { };
     private Runnable exitAction = () -> { };
 
@@ -78,14 +79,25 @@ public final class GameView extends StackPane implements SceneLifecycle {
             if (event.getButton() == MouseButton.PRIMARY) {
                 clicked.accept(lx, ly);
                 attackChanged.accept(true);
+            } else if (event.getButton() == MouseButton.SECONDARY) {
+                // 右键：光形态蓄力、影形态格挡。视图只上报"按着没有"，语义由模型决定。
+                secondaryChanged.accept(true);
+                event.consume();
             }
         });
         setOnMouseReleased(event -> {
             if (event.getButton() == MouseButton.PRIMARY) {
                 attackChanged.accept(false);
+            } else if (event.getButton() == MouseButton.SECONDARY) {
+                secondaryChanged.accept(false);
+                event.consume();
             }
         });
-        setOnMouseExited(event -> attackChanged.accept(false));
+        setOnMouseExited(event -> {
+            attackChanged.accept(false);
+            // 鼠标离开窗口等同于松开右键：否则蓄力会一直挂着，回到窗口瞬间自动发射。
+            secondaryChanged.accept(false);
+        });
     }
 
     public void bindInput(Consumer<KeyCode> onPressed, Consumer<KeyCode> onReleased) {
@@ -96,6 +108,11 @@ public final class GameView extends StackPane implements SceneLifecycle {
     public void bindPointer(BiConsumer<Double, Double> onMoved, Consumer<Boolean> onAttackChanged) {
         pointerMoved = onMoved;
         attackChanged = onAttackChanged;
+    }
+
+    /** 绑定右键按住状态：光形态蓄力、影形态格挡都靠它上报。 */
+    public void bindSecondary(Consumer<Boolean> onSecondaryChanged) {
+        secondaryChanged = onSecondaryChanged;
     }
 
     public void bindClick(BiConsumer<Double, Double> onClick) {

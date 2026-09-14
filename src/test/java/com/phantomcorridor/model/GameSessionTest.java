@@ -2,7 +2,9 @@ package com.phantomcorridor.model;
 
 import com.phantomcorridor.config.AppConfig;
 import com.phantomcorridor.config.GameConfig;
+import com.phantomcorridor.model.combat.DamageType;
 import com.phantomcorridor.model.combat.EnemyProjectile;
+import com.phantomcorridor.model.combat.Projectile;
 import com.phantomcorridor.model.dungeon.DungeonMap;
 import com.phantomcorridor.model.entity.Enemy;
 import com.phantomcorridor.model.entity.EnemyKind;
@@ -359,6 +361,72 @@ class GameSessionTest {
             case WEST -> new double[]{room.minX(), room.doorCenter(Direction.WEST)};
             case EAST -> new double[]{room.maxX(), room.doorCenter(Direction.EAST)};
         };
+    }
+
+    @Test
+    void holdingRightButtonChargesAndReleasingFiresABulletClearingShot() {
+        GameSession session = new GameSession();
+        session.newRun();
+        int energyBefore = session.getPlayer().getSkillEnergy();
+
+        session.setSecondaryHeld(true);
+        // 按住超过最短蓄力时间（0.15 秒）再松手，否则视作误触。
+        for (int frame = 0; frame < 12; frame++) update(session);
+        assertTrue(session.getPlayer().isCharging(), "按住右键应当进入蓄力");
+
+        session.setSecondaryHeld(false);
+        update(session);
+
+        assertFalse(session.getPlayer().isCharging(), "松开右键应当结束蓄力");
+        assertEquals(energyBefore - GameConfig.LIGHT_CHARGE_ENERGY_COST, session.getPlayer().getSkillEnergy(),
+                "蓄力发射固定扣 2 点能量");
+        Projectile shot = session.getAttackSystem().getProjectiles().stream()
+                .filter(Projectile::clearsEnemyBullets).findFirst().orElseThrow();
+        assertNotEquals(Projectile.Behaviour.PIERCE, shot.getBehaviour(),
+                "没蓄满就没有无限穿透——穿透是蓄满的招牌");
+    }
+
+    @Test
+    void holdingTheRightButtonToFullChargeFiresAPiercingShot() {
+        GameSession session = new GameSession();
+        session.newRun();
+
+        session.setSecondaryHeld(true);
+        // 蓄满会在同一帧自动发射，所以一直按住就够了。
+        for (int frame = 0; frame < 120 && session.getAttackSystem().getProjectiles().isEmpty(); frame++) {
+            update(session);
+        }
+
+        Projectile shot = session.getAttackSystem().getProjectiles().stream()
+                .filter(Projectile::clearsEnemyBullets).findFirst().orElseThrow();
+        assertEquals(Projectile.Behaviour.PIERCE, shot.getBehaviour(), "蓄满应当无限穿透");
+        assertEquals(GameConfig.LIGHT_CHARGE_SCORCH_STACKS, shot.getScorchStacks(),
+                "蓄满的那一发要带上满层灼痕的载荷");
+        assertFalse(session.getPlayer().isCharging(), "蓄满后应当已经自动打出去");
+    }
+
+    @Test
+    void runTimerStopsOnceTheRunIsOver() {
+        GameSession session = new GameSession();
+        session.newRun();
+        for (int frame = 0; frame < 30; frame++) update(session);
+        assertTrue(session.getRunTime() > 0.0, "跑动过程中用时应当在累计");
+
+        // 打死玩家：本局结束，用时必须停住（否则结算界面的计时会一直涨）。
+        Player player = session.getPlayer();
+        while (player.getHp() > 0) {
+            player.takeDamage(50.0, DamageType.PHYSICAL, 0, 0);
+            player.updateAnimation(GameConfig.PLAYER_HIT_INVULNERABILITY, 0, 0, false, false);
+        }
+        update(session);
+        double afterDeath = session.getRunTime();
+        double animationClockAfterDeath = session.getVisualTime();
+
+        for (int frame = 0; frame < 120; frame++) update(session);
+
+        assertEquals(afterDeath, session.getRunTime(), 1e-9, "本局结束后用时必须停住");
+        assertTrue(session.getVisualTime() > animationClockAfterDeath,
+                "动画时钟（传送门流光等）仍然要继续走，两者不能混用");
     }
 
     private static void update(GameSession session) {

@@ -60,6 +60,10 @@ public final class Projectile {
     private double burstCoefficient = 1.0;
     /** 归影双刃：到达最远点后开始返程。 */
     private boolean returning;
+    /** 是否可以击落敌方弹幕：蓄力光弹专用，普通光弹没有这个能力。 */
+    private boolean clearsEnemyBullets;
+    /** 命中时给敌人叠几层灼痕；普攻为 1，蓄满的蓄力弹叠满。 */
+    private int scorchStacks = 1;
 
     public Projectile(double x, double y, double velocityX, double velocityY,
                       double radius, WorldType world, double lifetime) {
@@ -178,6 +182,20 @@ public final class Projectile {
     public AttackProfile.ProjectileShape getShape() { return shape; }
     public boolean isReturning() { return returning; }
     public void setReturning(boolean returning) { this.returning = returning; }
+
+    /** 这枚弹体飞行时是否会击落敌方的可清除弹幕（蓄力光弹）。 */
+    public boolean clearsEnemyBullets() { return clearsEnemyBullets; }
+
+    public void setClearsEnemyBullets(boolean clearsEnemyBullets) {
+        this.clearsEnemyBullets = clearsEnemyBullets;
+    }
+
+    /** 命中时给敌人叠几层灼痕（普攻 1，蓄满的蓄力弹 3）。 */
+    public int getScorchStacks() { return scorchStacks; }
+
+    public void setScorchStacks(int scorchStacks) {
+        this.scorchStacks = Math.max(1, scorchStacks);
+    }
 
     public boolean isExpired() { return remainingLifetime <= 0.0; }
     public double getRemainingLifetime() { return remainingLifetime; }
