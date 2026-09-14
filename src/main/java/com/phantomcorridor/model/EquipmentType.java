@@ -20,21 +20,21 @@ public enum EquipmentType {
     /** 唯一撑护盾的饰品：换层重置护盾时，容量整体抬高，等于每层多一条更厚的临时血。 */
     PHASE_VESSEL("相位容器", "通用", "护盾上限 +12，进层时重置为一整条", 5, 20, 12),
 
-    PRISM_FAN_WAND("棱光三叉杖", "光", "光弹变为 -14°/0°/+14° 三向散射", 6, 34, 0, "PRISM_FAN_WAND"),
-    SUNLANCE("贯日长杖", "光", "细长光矛，最多穿透三个敌人", 7, 38, 0, "SUNLANCE"),
-    MIRROR_ORB("折镜法球", "光", "命中后向附近敌人弹射两次", 8, 46, 0, "MIRROR_ORB"),
-    SOLAR_BURST_STAFF("炽核权杖", "光", "慢速光核命中后范围爆裂", 9, 48, 0, "SOLAR_BURST_STAFF"),
-    CRESCENT_REAPER("环月镰", "影", "近身攻击改为周身环斩", 10, 34, 0, "CRESCENT_REAPER"),
-    RETURNING_FANG("归影双刃", "影", "短距影刃飞出并回旋", 11, 38, 0, "RETURNING_FANG"),
-    NIGHTFALL_GREATSWORD("夜坠重剑", "影", "窄角度、长距离重劈", 12, 42, 0, "NIGHTFALL_GREATSWORD"),
-    ECLIPSE_RELAY("蚀界仪", "双界", "光界二连发，影界延迟复斩", 13, 52, 0, "ECLIPSE_RELAY"),
-    SUNWEAVE_MANTLE("曜纹披肩", "光", "光界受伤减免 30%，冷却 6 秒", 14, 28, 0, "SUNWEAVE_MANTLE"),
-    NIGHTSTEP_CLOAK("夜行披风", "影", "影斩后短暂加速", 15, 32, 0, "NIGHTSTEP_CLOAK"),
+    PRISM_FAN_WAND("棱光三叉杖", "光", "光弹三向散射（±14°），每发 0.45×伤害，间隔 ×1.10", 6, 34, 0, "PRISM_FAN_WAND"),
+    SUNLANCE("贯日长杖", "光", "光矛穿透 3 敌：1.00/0.75/0.50×伤害，速度 ×1.35", 7, 38, 0, "SUNLANCE"),
+    MIRROR_ORB("折镜法球", "光", "首发 0.85×，命中后弹射 0.55×/0.35×", 8, 46, 0, "MIRROR_ORB"),
+    SOLAR_BURST_STAFF("炽核权杖", "光", "光核速度 ×0.70，命中爆裂半径 80，爆裂 1.10×", 9, 48, 0, "SOLAR_BURST_STAFF"),
+    CRESCENT_REAPER("环月镰", "影", "360°环斩，范围 ×0.80、伤害 ×0.80，间隔 ×1.20", 10, 34, 0, "CRESCENT_REAPER"),
+    RETURNING_FANG("归影双刃", "影", "影刃往返距离 ×1.60，出/返程各 0.55×伤害", 11, 38, 0, "RETURNING_FANG"),
+    NIGHTFALL_GREATSWORD("夜坠重剑", "影", "40°重劈，距离 ×1.35、伤害 ×1.60，前摇 0.18 秒", 12, 42, 0, "NIGHTFALL_GREATSWORD"),
+    ECLIPSE_RELAY("蚀界仪", "双界", "光界双发 0.55×（间隔 0.10 秒）；影界 0.75×+0.45×复斩", 13, 52, 0, "ECLIPSE_RELAY"),
+    SUNWEAVE_MANTLE("曜纹披肩", "光", "光界受击减伤 30%，冷却 6 秒", 14, 28, 0, "SUNWEAVE_MANTLE"),
+    NIGHTSTEP_CLOAK("夜行披风", "影", "影界攻击后移速 +18%，持续 0.45 秒", 15, 32, 0, "NIGHTSTEP_CLOAK"),
     FOCUS_LENS("凝光透镜", "光", "光界伤害 +25%，攻击间隔 ×1.15", 16, 30, 0, "FOCUS_LENS"),
-    HUNTERS_FANG("猎影牙饰", "影", "对高生命敌人的影界伤害 +25%", 17, 34, 0, "HUNTERS_FANG"),
-    RESONANCE_RING("余震指环", "双界", "每第四轮攻击追加一次震波", 18, 44, 0, "RESONANCE_RING"),
+    HUNTERS_FANG("猎影牙饰", "影", "对生命 >70% 的敌人影伤 +25%", 17, 34, 0, "HUNTERS_FANG"),
+    RESONANCE_RING("余震指环", "双界", "每第 4 轮攻击追加震波（光 0.30×/影 0.25×）", 18, 44, 0, "RESONANCE_RING"),
     PHASE_GYROSCOPE("相位陀螺", "通用", "切界后攻击间隔 ×0.85，持续 2 秒", 19, 36, 0, "PHASE_GYROSCOPE"),
-    WAYFARER_HEART("行者心核", "通用", "最大生命 +20%", 20, 28, 0, "WAYFARER_HEART");
+    WAYFARER_HEART("行者心核", "通用", "最大生命 +20%（装备不补血）", 20, 28, 0, "WAYFARER_HEART");
 
     // 新增装备：攻击方案与说明来自“新增15件装备与攻击特效设计”。
     // iconIndex 保留给旧图集兼容；assetId 用于加载独立的高清贴图。

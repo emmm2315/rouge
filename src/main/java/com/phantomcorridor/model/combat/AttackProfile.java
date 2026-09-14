@@ -78,6 +78,21 @@ public record AttackProfile(
     /** 一轮攻击是否由多颗弹体组成（三叉杖、二连发）。 */
     public boolean isMultiPellet() { return pellets > 1; }
 
+    /**
+     * 返回仅调整弹速后的同一攻击方案。
+     *
+     * <p>旧版「晨曦法杖」提供的是基础光弹速度加成，而不是一套新的攻击形态；
+     * 因此由攻击系统在生成基础光弹时使用这个无状态副本，避免修改共享方案或影响
+     * 贯日长杖等已有专属弹速。
+     */
+    public AttackProfile withSpeedScale(double multiplier) {
+        if (multiplier == 1.0) return this;
+        return new AttackProfile(world, shape, pellets, spreadDegrees, damageCoefficients,
+                extraHits, speedScale * multiplier, lifetimeScale, radiusScale,
+                cooldownScale, minCooldown, meleeArcDegrees, meleeRangeScale, windup,
+                pelletInterval);
+    }
+
     // ---- 各武器的具体方案 ----
 
     /** 基础光弹：单发、系数 1.0、间隔 1.0。 */

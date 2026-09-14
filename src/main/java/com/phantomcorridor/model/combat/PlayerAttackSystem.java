@@ -251,6 +251,12 @@ public final class PlayerAttackSystem {
                     ? (world == WorldType.LIGHT ? AttackProfile.baseLight() : AttackProfile.baseShadow())
                     : AttackProfile.forWeapon(weapon, world);
             if (profile != null) {
+                // 晨曦法杖不是“改变攻击方式”的武器：没有其它形态武器时，
+                // 它只给基础光弹增加速度。同名装备按件数叠加；专属武器的速度
+                // 仍以各自方案为准，避免把法杖加成错误地套到长杖/光核上。
+                if (weapon == null && world == WorldType.LIGHT) {
+                    profile = profile.withSpeedScale(player.lightProjectileSpeedMultiplier());
+                }
                 profiles.add(profile);
                 resolvedWeapons.add(weapon);
             }

@@ -1148,12 +1148,21 @@ public final class GameRenderer {
             g.drawImage(dedicated, 0, 0, dedicated.getWidth(), dedicated.getHeight(), x, y, size, size);
             return;
         }
-        drawAtlasIcon(g, item.iconIndex() % 3, x, y, size, Color.web("#f0c86e"));
+        // 旧版资源分成两个三格图集：前三件是武器，后三件是饰品。
+        // 不能只按 iconIndex 取模后统一使用 weapons_v1，否则
+        // 「晨曦圣印 / 暮色斗篷 / 相位容器」会分别显示成武器图标（暮色斗篷
+        // 尤其会错误地显示为影牙短刃）。
+        boolean legacyWeapon = switch (item) {
+            case DAWN_WAND, SHADOW_FANG, RIFT_TWINBLADE -> true;
+            default -> false;
+        };
+        drawAtlasIcon(g, legacyWeapon ? WEAPON_ICONS : EQUIPMENT_ICONS,
+                item.iconIndex() % 3, x, y, size, Color.web("#f0c86e"));
     }
 
     /** 旧图集回退：三格横排图集里取第 {@code cell} 格；图集缺失时画一个纯色方块兜底。 */
-    private void drawAtlasIcon(GraphicsContext g, int cell, double x, double y, double size, Color fallback) {
-        Image source = cell < 3 ? WEAPON_ICONS : EQUIPMENT_ICONS;
+    private void drawAtlasIcon(GraphicsContext g, Image source, int cell,
+                               double x, double y, double size, Color fallback) {
         if (source == null) {
             g.setFill(fallback);
             g.fillRect(x + size / 2.0 - 8, y + size / 2.0 - 8, 16, 16);

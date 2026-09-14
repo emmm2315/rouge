@@ -711,8 +711,16 @@ public final class Player {
         double multiplier = 1.0;
         if (world == WorldType.LIGHT) {
             multiplier *= Math.pow(1.15, equipmentCount(EquipmentType.FOCUS_LENS));
+        } else if (world == WorldType.SHADOW) {
+            // 影牙短刃的旧版属性：影斩冷却 -10%，同名装备按件数叠加。
+            multiplier *= Math.pow(0.90, equipmentCount(EquipmentType.SHADOW_FANG));
         }
         return multiplier * gyroscopeMultiplier();
+    }
+
+    /** 基础光弹的速度倍率（晨曦法杖的旧版属性，同名按件数叠加）。 */
+    public double lightProjectileSpeedMultiplier() {
+        return Math.pow(1.10, equipmentCount(EquipmentType.DAWN_WAND));
     }
 
     /**
