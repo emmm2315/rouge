@@ -21,7 +21,7 @@ public final class GameController {
     private boolean interactHeld;
     private boolean attackHeld;
     private boolean dashHeld;
-    private boolean skillHeld, finisherHeld, modifierHeld;
+    private boolean skillHeld, skill2Held, finisherHeld, modifierHeld;
     private double aimX;
     private double aimY;
     private final Settings settings;
@@ -71,7 +71,7 @@ public final class GameController {
         interactHeld = false;
         attackHeld = false;
         dashHeld = false;
-        skillHeld = finisherHeld = modifierHeld = false;
+        skillHeld = skill2Held = finisherHeld = modifierHeld = false;
         aimX = session.getPlayer().getX() + 1.0;
         aimY = session.getPlayer().getY();
         onSessionUpdated.accept(session);
@@ -95,7 +95,7 @@ public final class GameController {
         interactHeld = false;
         attackHeld = false;
         dashHeld = false;
-        skillHeld = finisherHeld = modifierHeld = false;
+        skillHeld = skill2Held = finisherHeld = modifierHeld = false;
     }
 
     private void keyPressed(KeyCode key) {
@@ -134,6 +134,10 @@ public final class GameController {
                 if (!skillHeld) session.tryUseAbility(false, aimX, aimY);
                 skillHeld = true;
             }
+            case F -> {
+                if (!skill2Held) session.tryUseSkill(1, aimX, aimY);
+                skill2Held = true;
+            }
             case R -> {
                 if (!finisherHeld) session.tryUseAbility(true, aimX, aimY);
                 finisherHeld = true;
@@ -171,6 +175,7 @@ public final class GameController {
         switch (key) {
             case SHIFT -> modifierHeld = false;
             case Q -> skillHeld = false;
+            case F -> skill2Held = false;
             case R -> finisherHeld = false;
             case W, UP -> input.setUp(false);
             case S, DOWN -> input.setDown(false);

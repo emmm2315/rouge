@@ -71,7 +71,7 @@ public final class GameConfig {
     public static final double SHADOW_ATTACK_COOLDOWN = 0.55;
     /**
      * 技能蓝量上限。沿用旧攻击充能字段以兼容道具容量与既有模型接口，
-     * 普攻不再扣除；Q 每次消耗 6 点，每 1.5 秒恢复 1 点。
+     * 普攻不再扣除；Q/F 技能每次消耗 6 点，每 1.5 秒恢复 1 点。
      */
     public static final int ATTACK_CHARGE_MAX = 16;
     public static final int LIGHT_ATTACK_CHARGE_COST = 1;
@@ -80,7 +80,8 @@ public final class GameConfig {
     public static final int SKILL_ENERGY_COST = 6;
     public static final double SKILL_COOLDOWN = 4.0;
     public static final double FINISHER_COOLDOWN = 30.0;
-    public static final double FINISHER_PHASE_COST = 100.0;
+    /** 终结技门槛：相位能量满槽前即可释放，避免一局中长期等不到终结技。 */
+    public static final double FINISHER_PHASE_COST = 80.0;
 
     // ---- 装备专属效果（《新增 15 件装备与攻击特效设计》§五） ----
     /** 相位陀螺：成功切界后的攻速窗口时长（秒）与间隔倍率。 */
@@ -499,6 +500,8 @@ public final class GameConfig {
 
     /** 相位碎片拾取回复能量（点/个，占位；§3.4 与 §8.3 掉落） */
     public static final double PHASE_ENERGY_PER_FRAGMENT = 10.0;
+    /** 旧版统一击杀奖励的兼容常量；实际运行时改由 EnemyKind.phaseEnergyReward() 按物种结算。 */
+    @Deprecated
     public static final double PHASE_ENERGY_PER_KILL = 3.0;
 
     /** 切换世界后的冷却时间（秒，占位；§3.3"切换后进入冷却恢复期"） */

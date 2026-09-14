@@ -114,6 +114,8 @@ public final class EnemySystem {
     public boolean isBetweenWaves() { return waveDelay >= 0.0; }
 
     private int killsSinceLastRead;
+    /** 最近一批非召唤敌人击杀对应的相位能量奖励。 */
+    private int phaseEnergySinceLastRead;
     private int summonCallsSinceLastRead;
     private int phaseTransitionsSinceLastRead;
     private int floor = 1;
@@ -140,6 +142,7 @@ public final class EnemySystem {
         consumedHitIds.clear();
         activeRoomId = -1;
         killsSinceLastRead = 0;
+        phaseEnergySinceLastRead = 0;
         summonCallsSinceLastRead = 0;
         phaseTransitionsSinceLastRead = 0;
         blinkFlash = null;
@@ -272,7 +275,10 @@ public final class EnemySystem {
                 visualEffects.add(EnemyVisualEffect.body(enemy.getKind(), enemy.getWorld(), "death", enemy.getFacing(),
                         enemy.getX(), enemy.getY(), displayWidth(enemy.getKind()), .70));
                 activeCasts.remove(enemy);
-                if (!enemy.isSummoned()) killsSinceLastRead++;
+                if (!enemy.isSummoned()) {
+                    killsSinceLastRead++;
+                    phaseEnergySinceLastRead += enemy.getKind().phaseEnergyReward();
+                }
                 bossFell |= enemy.isBoss();
                 iterator.remove();
                 continue;
@@ -1118,22 +1124,24 @@ public final class EnemySystem {
             }
         }
 
-        // 近战：按本轮方案的扇形与距离判定，环月镰是 360°、重剑是 40° 窄劈。
+        // 近战：同一轮可以同时存在多件影界攻击方式（环斩、重劈、延迟复斩等），
+        // 每个窗口都有独立的扇形、距离、系数和命中 ID，不能再只取一件优先武器。
         if (player.getCurrentWorld() == WorldType.SHADOW && playerAttacks.isMeleeVisible()) {
-            int attackId = playerAttacks.getMeleeAttackId();
-            for (Enemy enemy : enemies) {
-                if (enemy.isDead()) continue;
-                if (!hasLineOfSight(player.getX(), player.getY(), enemy.getHitboxCenterX(),
-                        enemy.getHitboxCenterY(), WorldType.SHADOW)) continue;
-                if (enemy.getLastMeleeHitId() == attackId) continue;
-                if (!meleeCovers(player, playerAttacks, enemy)) continue;
-                int dealt = applyDamage(player, enemy, playerAttacks.getMeleeCoefficient(),
-                        player.getX(), player.getY());
-                if (dealt > 0) {
-                    enemy.setLastMeleeHitId(attackId);
-                    if (empowered) {
-                        empowered = false;
-                        spawnResonanceShockwave(player, player.getX(), player.getY(), true);
+            for (PlayerAttackSystem.MeleeStrike strike : playerAttacks.getMeleeStrikes()) {
+                for (Enemy enemy : enemies) {
+                    if (enemy.isDead()) continue;
+                    if (!hasLineOfSight(player.getX(), player.getY(), enemy.getHitboxCenterX(),
+                            enemy.getHitboxCenterY(), WorldType.SHADOW)) continue;
+                    if (enemy.getLastMeleeHitId() == strike.attackId()) continue;
+                    if (!meleeCovers(player, strike, enemy)) continue;
+                    int dealt = applyDamage(player, enemy, strike.coefficient(),
+                            player.getX(), player.getY());
+                    if (dealt > 0) {
+                        enemy.setLastMeleeHitId(strike.attackId());
+                        if (empowered) {
+                            empowered = false;
+                            spawnResonanceShockwave(player, player.getX(), player.getY(), true);
+                        }
                     }
                 }
             }
@@ -1216,18 +1224,18 @@ public final class EnemySystem {
     }
 
     /** 近战扇形判定：目标要在本轮距离内、且落在扇形角度里（360° 就是全天周）。 */
-    private static boolean meleeCovers(Player player, PlayerAttackSystem attacks, Enemy enemy) {
+    private static boolean meleeCovers(Player player, PlayerAttackSystem.MeleeStrike attacks, Enemy enemy) {
         double dx = enemy.getHitboxCenterX() - player.getX();
         double dy = enemy.getHitboxCenterY() - player.getY();
         double distance = Math.hypot(dx, dy);
-        if (distance > attacks.getMeleeRange() + enemy.getHitboxRadius()) return false;
-        double arc = attacks.getMeleeArcDegrees();
+        if (distance > attacks.range() + enemy.getHitboxRadius()) return false;
+        double arc = attacks.arcDegrees();
         if (arc >= 360.0) return true;
         if (distance < 0.0001) return true;
         double toEnemy = Math.atan2(dy, dx);
         double half = Math.toRadians(arc / 2.0);
-        double delta = Math.atan2(Math.sin(toEnemy - attacks.getMeleeAngleRadians()),
-                Math.cos(toEnemy - attacks.getMeleeAngleRadians()));
+        double delta = Math.atan2(Math.sin(toEnemy - attacks.angleRadians()),
+                Math.cos(toEnemy - attacks.angleRadians()));
         return Math.abs(delta) <= half;
     }
 
@@ -2271,6 +2279,11 @@ public final class EnemySystem {
     public boolean isRoomCleared() { return enemies.isEmpty() && currentWave >= totalWaves; }
     public int getCount(WorldType world) { return (int) enemies.stream().filter(enemy -> enemy.getWorld() == world).count(); }
     public int consumeKills() { int result = killsSinceLastRead; killsSinceLastRead = 0; return result; }
+    public int consumePhaseEnergyReward() {
+        int result = phaseEnergySinceLastRead;
+        phaseEnergySinceLastRead = 0;
+        return result;
+    }
 
     /**
      * 只投放一只指定物种的敌人，位置交给调用方设置。

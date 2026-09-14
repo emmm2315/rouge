@@ -89,6 +89,24 @@ public enum EnemyKind {
     public double speedMultiplier() { return speedMultiplier; }
     public String lightEffect() { return lightEffect; }
 
+    /**
+     * 击败该物种获得的相位能量。数值按威胁、血量与战斗职责区分，
+     * 召唤物仍由 {@code EnemySystem} 排除，不会调用这项奖励。
+     */
+    public int phaseEnergyReward() {
+        return switch (this) {
+            case LANTERN -> 2;
+            case WOLF, MAGE, RAYBAT -> 3;
+            case SPORE -> 4;
+            case GOLEM, BEETLE -> 5;
+            case BELL -> 6;
+            case EXECUTIONER -> 7;
+            case WATCHER, MANTIS, HOURGLASS -> 13;
+            case PRISM_CRAB, WEAVER -> 14;
+            case ROOTKING -> 16;
+        };
+    }
+
     /** 精英怪：后段战斗房里会替换掉一只普通怪。首领不算精英。 */
     public boolean elite() { return tier == Tier.ELITE; }
 
