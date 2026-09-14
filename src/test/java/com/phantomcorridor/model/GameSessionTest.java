@@ -300,8 +300,11 @@ class GameSessionTest {
         session.getPlayer().equip(com.phantomcorridor.model.EquipmentType.DAWN_WAND);
 
         enterFloorBossRoom(session);
+        EnemyKind defeatedKind = session.getBossKind();
         defeatTheBoss(session);
         assertTrue(session.getNavigation().getCurrentRoom().hasPortal(), "击败首领后应当刷出传送门");
+        assertTrue(session.getDefeatedBossKinds().contains(defeatedKind),
+                "击败的首领种类需要进入全首领成就进度");
 
         useThePortal(session);
 

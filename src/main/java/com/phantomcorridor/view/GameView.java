@@ -4,16 +4,28 @@ import com.phantomcorridor.config.AppConfig;
 import com.phantomcorridor.controller.SceneLifecycle;
 import com.phantomcorridor.model.GameSession;
 import com.phantomcorridor.model.WorldType;
+import com.phantomcorridor.model.Achievement;
 import javafx.animation.FadeTransition;
+import javafx.animation.PauseTransition;
+import javafx.animation.SequentialTransition;
+import javafx.geometry.Insets;
+import javafx.geometry.Pos;
 import javafx.scene.canvas.Canvas;
+import javafx.scene.control.Label;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
+import javafx.scene.layout.HBox;
 import javafx.util.Duration;
 import java.awt.im.InputContext;
 import java.util.Locale;
+import java.util.ArrayDeque;
+import java.util.Deque;
 
 import java.util.function.Consumer;
 import java.util.function.BiConsumer;
@@ -26,6 +38,12 @@ public final class GameView extends StackPane implements SceneLifecycle {
     private final Canvas canvas = new Canvas(AppConfig.VIEW_WIDTH, AppConfig.VIEW_HEIGHT);
     private final GameRenderer renderer = new GameRenderer();
     private final Region shiftFlash = new Region();
+    private final VBox achievementToast = new VBox(2.0);
+    private final Label achievementTitle = new Label();
+    private final Label achievementDescription = new Label();
+    private final ImageView achievementIcon = new ImageView();
+    private final Deque<Achievement> achievementQueue = new ArrayDeque<>();
+    private boolean showingAchievement;
     private Consumer<KeyCode> keyPressed = key -> { };
     private Consumer<KeyCode> keyReleased = key -> { };
     private BiConsumer<Double, Double> pointerMoved = (x, y) -> { };
@@ -43,7 +61,19 @@ public final class GameView extends StackPane implements SceneLifecycle {
         shiftFlash.setMinSize(AppConfig.VIEW_WIDTH, AppConfig.VIEW_HEIGHT);
         shiftFlash.setPrefSize(AppConfig.VIEW_WIDTH, AppConfig.VIEW_HEIGHT);
         shiftFlash.setVisible(false);
-        getChildren().addAll(canvas, shiftFlash);
+        achievementTitle.getStyleClass().add("achievement-toast-title");
+        achievementDescription.getStyleClass().add("achievement-toast-description");
+        achievementIcon.setFitWidth(38); achievementIcon.setFitHeight(38); achievementIcon.setPreserveRatio(true);
+        HBox achievementHeader = new HBox(9, achievementIcon, achievementTitle);
+        achievementHeader.setAlignment(Pos.CENTER_LEFT);
+        achievementToast.getChildren().addAll(achievementHeader, achievementDescription);
+        achievementToast.getStyleClass().add("achievement-toast");
+        achievementToast.setManaged(false);
+        achievementToast.setMouseTransparent(true);
+        achievementToast.setVisible(false);
+        StackPane.setAlignment(achievementToast, Pos.TOP_RIGHT);
+        StackPane.setMargin(achievementToast, new Insets(22, 24, 0, 0));
+        getChildren().addAll(canvas, shiftFlash, achievementToast);
         canvas.widthProperty().bind(widthProperty());
         canvas.heightProperty().bind(heightProperty());
         shiftFlash.prefWidthProperty().bind(widthProperty());
@@ -147,6 +177,38 @@ public final class GameView extends StackPane implements SceneLifecycle {
         fade.setToValue(0.0);
         fade.setOnFinished(event -> shiftFlash.setVisible(false));
         fade.playFromStart();
+    }
+
+    /** 右上角的成就小提示：队列保证同一帧解锁多项时不会互相覆盖。 */
+    public void showAchievementUnlocked(Achievement achievement) {
+        if (achievement == null) return;
+        achievementQueue.addLast(achievement);
+        if (!showingAchievement) showNextAchievement();
+    }
+
+    private void showNextAchievement() {
+        Achievement achievement = achievementQueue.pollFirst();
+        if (achievement == null) { showingAchievement = false; return; }
+        showingAchievement = true;
+        achievementTitle.setText("成就解锁  ·  " + achievement.title());
+        achievementDescription.setText(achievement.description());
+        achievementIcon.setImage(achievementIcon(achievement));
+        achievementToast.setVisible(true);
+        achievementToast.setOpacity(0.0);
+        FadeTransition in = new FadeTransition(Duration.millis(180), achievementToast);
+        in.setToValue(1.0);
+        PauseTransition stay = new PauseTransition(Duration.seconds(3.0));
+        FadeTransition out = new FadeTransition(Duration.millis(360), achievementToast);
+        out.setToValue(0.0);
+        SequentialTransition transition = new SequentialTransition(in, stay, out);
+        transition.setOnFinished(event -> { achievementToast.setVisible(false); showNextAchievement(); });
+        transition.play();
+    }
+
+    private static Image achievementIcon(Achievement achievement) {
+        var resource = GameView.class.getResource("/com/phantomcorridor/ui/achievements/"
+                + achievement.iconId() + ".png");
+        return resource == null ? null : new Image(resource.toExternalForm(), false);
     }
 
     @Override

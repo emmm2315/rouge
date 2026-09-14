@@ -15,6 +15,26 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class HiddenRouteTest {
     @Test
+    void hiddenDoorStaysClosedUntilBattleRoomIsCleared() {
+        Room battle = openRoom(0, RoomType.BATTLE);
+        Room hidden = openRoom(1, RoomType.HIDDEN);
+        battle.connect(Direction.EAST, hidden.id());
+        hidden.connect(Direction.WEST, battle.id());
+        battle.setHiddenExit(Direction.EAST, hidden.id());
+        hidden.configureHiddenRoute(WorldType.LIGHT, Direction.WEST);
+        RoomNavigationSystem navigation = new RoomNavigationSystem();
+        Player player = new Player(100, 100);
+        navigation.reset(new DungeonMap(List.of(battle, hidden)));
+        navigation.placeAtEntrance(player);
+
+        moveToDoor(navigation, player, Direction.EAST);
+        assertSame(battle, navigation.getCurrentRoom(), "战斗未清空时不能走入隐藏房");
+
+        battle.setCleared(true);
+        moveToDoor(navigation, player, Direction.EAST);
+        assertSame(hidden, navigation.getCurrentRoom());
+    }
+    @Test
     void generatedHiddenRouteIsStableAndDoesNotReplaceBoss() {
         DungeonMap first = new MapGenerator().generate(4281L);
         DungeonMap second = new MapGenerator().generate(4281L);
@@ -91,5 +111,8 @@ class HiddenRouteTest {
     private static Room openRoom(int id, RoomType type) {
         return new Room(id, type, id, 0, RoomShape.SQUARE,
                 List.of(new RoomArea(0, 0, 1280, 960)), List.of());
+    }
+    private static void moveToDoor(RoomNavigationSystem navigation, Player player, Direction direction) {
+        for (int i = 0; i < 180; i++) navigation.move(player, direction.dx(), direction.dy(), 1.0 / 60);
     }
 }

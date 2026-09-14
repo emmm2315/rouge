@@ -2,6 +2,8 @@ package com.phantomcorridor.controller;
 
 import com.phantomcorridor.core.GameLoop;
 import com.phantomcorridor.model.GameSession;
+import com.phantomcorridor.model.Achievement;
+import com.phantomcorridor.model.PlayerProgress;
 import com.phantomcorridor.view.GameView;
 import com.phantomcorridor.view.SettlementButtons;
 import javafx.scene.input.KeyCode;
@@ -29,6 +31,7 @@ public final class GameController {
     private final Settings settings;
     private final Runnable onMainMenu;
     private final Consumer<GameSession> onSessionUpdated;
+    private final PlayerProgress progress;
 
     public GameController(GameView view, Runnable onPauseRequested, Settings settings) {
         this(view, onPauseRequested, settings, () -> { }, session -> { });
@@ -41,11 +44,17 @@ public final class GameController {
     /** @param onSessionUpdated 用于同步音乐等只读的表现层状态。 */
     public GameController(GameView view, Runnable onPauseRequested, Settings settings, Runnable onMainMenu,
                           Consumer<GameSession> onSessionUpdated) {
+        this(view, onPauseRequested, settings, onMainMenu, onSessionUpdated, new PlayerProgress());
+    }
+
+    public GameController(GameView view, Runnable onPauseRequested, Settings settings, Runnable onMainMenu,
+                          Consumer<GameSession> onSessionUpdated, PlayerProgress progress) {
         this.view = view;
         this.onPauseRequested = onPauseRequested;
         this.settings = settings;
         this.onMainMenu = onMainMenu;
         this.onSessionUpdated = onSessionUpdated == null ? session -> { } : onSessionUpdated;
+        this.progress = progress == null ? new PlayerProgress() : progress;
         this.loop = new GameLoop() {
             @Override
             protected void update(double dt) {
@@ -54,6 +63,7 @@ public final class GameController {
                 boolean attacking = attackHeld && !panelOpen;
                 session.setSecondaryHeld(secondaryHeld && !panelOpen);
                 session.update(dt, input.horizontal(), input.vertical(), aimX, aimY, attacking);
+                updateProgress();
                 GameController.this.onSessionUpdated.accept(session);
             }
             @Override
@@ -67,6 +77,25 @@ public final class GameController {
         view.bindClick(this::pointerClicked);
         view.bindLifecycle(this::start, this::stop);
         newRun();
+    }
+
+    private void updateProgress() {
+        session.getCollectedEquipment().forEach(progress::discover);
+        session.getDefeatedBossKinds().forEach(progress::recordBossDefeat);
+        if (session.hasDefeatedBoss() && progress.unlock(Achievement.BOSS_SLAYER)) {
+            view.showAchievementUnlocked(Achievement.BOSS_SLAYER);
+        }
+        if (progress.hasDefeatedEveryBoss() && progress.unlock(Achievement.ALL_BOSSES)) {
+            view.showAchievementUnlocked(Achievement.ALL_BOSSES);
+        }
+        if (!session.isRunCleared()) return;
+        Achievement clearAchievement = switch (session.getDifficulty()) {
+            case EASY -> Achievement.EASY_CLEAR;
+            case NORMAL -> Achievement.NORMAL_CLEAR;
+            case HARD -> Achievement.HARD_CLEAR;
+            case INSANE -> Achievement.INSANE_CLEAR;
+        };
+        if (progress.unlock(clearAchievement)) view.showAchievementUnlocked(clearAchievement);
     }
 
     public void newRun() {

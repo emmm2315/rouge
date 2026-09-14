@@ -9,6 +9,7 @@ import com.phantomcorridor.controller.MainMenuController;
 import com.phantomcorridor.controller.SceneManager;
 import com.phantomcorridor.core.GameState;
 import com.phantomcorridor.model.PlayerProfile;
+import com.phantomcorridor.model.PlayerProgress;
 import com.phantomcorridor.view.GameView;
 import com.phantomcorridor.view.LoginView;
 import com.phantomcorridor.view.MainMenuView;
@@ -72,16 +73,17 @@ public class App extends Application {
         Settings settings = new Settings();
         audio = new AudioManager(settings);
         PlayerProfile profile = PlayerProfile.loadLocal();
+        PlayerProgress progress = PlayerProgress.loadLocal();
         sceneManager = new SceneManager(root);
 
         LoginController loginController = new LoginController(profile, this::showMainMenu);
         MainMenuController mainMenuController = new MainMenuController(
-                this::showGame, stage::close, settings, profile);
+                this::showGame, stage::close, settings, profile, progress);
         loginView = loginController.getView();
         mainMenuView = mainMenuController.getView();
         gameView = new GameView();
         gameController = new GameController(gameView, this::showPause, settings, this::showMainMenu,
-                audio::syncGameMusic);
+                audio::syncGameMusic, progress);
         pauseView = new PauseView(this::resumeGame, this::showMainMenu);
         root.getChildren().addAll(loginView, mainMenuView, gameView, pauseView);
 

@@ -257,6 +257,7 @@ public final class GameRenderer {
     private void drawHiddenExit(GraphicsContext g, GameSession session) {
         Room room = session.getNavigation().getCurrentRoom();
         if (!room.hasHiddenExit()) return;
+        if (requiredFormOf(session, room) != session.getPlayer().getCurrentWorld()) return;
         Direction direction = room.hiddenExitDirection();
         double x = room.doorCenter(direction);
         double y = switch (direction) {
@@ -1933,6 +1934,7 @@ public final class GameRenderer {
             if (!room.isDiscovered()) continue;
             for (var edge : room.neighbors().entrySet()) {
                 Room neighbor = session.getNavigation().getMap().room(edge.getValue());
+                if (!isVisibleOnMiniMap(session, room) || !isVisibleOnMiniMap(session, neighbor)) continue;
                 if (!neighbor.isDiscovered() || room.id() > neighbor.id()) continue;
                 boolean usable = (room == current && room.isDoorOpen(edge.getKey()))
                         || (neighbor == current && neighbor.isDoorOpen(edge.getKey().opposite()));
@@ -1946,7 +1948,7 @@ public final class GameRenderer {
         }
 
         for (Room room : session.getNavigation().getMap().rooms()) {
-            if (!room.isDiscovered()) continue;
+            if (!room.isDiscovered() || !isVisibleOnMiniMap(session, room)) continue;
             double x = originX + (room.mapX() - current.mapX()) * scale;
             double y = originY + (room.mapY() - current.mapY()) * scale;
             if (room == current) {
@@ -1982,7 +1984,8 @@ public final class GameRenderer {
                 g.setLineWidth(1.0);
                 g.strokeOval(x + 5, y - 13, 8, 8);
             }
-            if (room.hasHiddenExit() && room.isVisited()) {
+            if (room.hasHiddenExit() && room.isVisited()
+                    && requiredFormOf(session, room) == session.getPlayer().getCurrentWorld()) {
                 // 小地图上的隐藏出口标记同样按"需要哪种形态"着色，玩家不必跑回房间才知道。
                 g.setFill(hiddenRouteColor(requiredFormOf(session, room)));
                 g.fillOval(x - 4, y - 16, 8, 8);
@@ -1990,6 +1993,12 @@ public final class GameRenderer {
         }
         g.restore();
         drawMiniMapLegend(g, panelX, panelY + panelSize);
+    }
+
+    /** 隐藏路线只会在入口所要求的形态中出现在小地图上。 */
+    private static boolean isVisibleOnMiniMap(GameSession session, Room room) {
+        if (room.type() != RoomType.HIDDEN) return true;
+        return room.requiredEntryForm() == session.getPlayer().getCurrentWorld();
     }
 
     /**

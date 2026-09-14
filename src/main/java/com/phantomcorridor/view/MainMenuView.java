@@ -4,6 +4,9 @@ import com.phantomcorridor.config.AppConfig;
 import com.phantomcorridor.config.Settings;
 import com.phantomcorridor.controller.SceneLifecycle;
 import com.phantomcorridor.model.Difficulty;
+import com.phantomcorridor.model.Achievement;
+import com.phantomcorridor.model.EquipmentType;
+import com.phantomcorridor.model.PlayerProgress;
 import javafx.animation.FadeTransition;
 import javafx.animation.ParallelTransition;
 import javafx.animation.ScaleTransition;
@@ -14,6 +17,10 @@ import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
+import javafx.geometry.Rectangle2D;
 import javafx.scene.input.KeyCode;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
@@ -79,7 +86,9 @@ public class MainMenuView extends StackPane implements SceneLifecycle {
     private final VBox menuContent;
 
     /** 道具图鉴覆盖层（对应 §8.2，占位展示道具分类） */
-    private final VBox galleryContent;
+    private VBox galleryContent;
+    private VBox achievementContent;
+    private final PlayerProgress progress;
 
     /** 难度选择覆盖层（点击「开始游戏」后弹出） */
     private final VBox difficultyContent;
@@ -104,7 +113,8 @@ public class MainMenuView extends StackPane implements SceneLifecycle {
      * @param settings 全局设置对象（设置面板读写）
      */
     public MainMenuView(Runnable onStart, Runnable onQuit, Settings settings,
-                        Supplier<String> nicknameSupplier) {
+                        Supplier<String> nicknameSupplier, PlayerProgress progress) {
+        this.progress = progress;
         getStyleClass().add("main-menu-pane");
 
         // 背景置于最底层（夜空光弧 + 水面动效）；菜单内容等叠加其上
@@ -122,7 +132,8 @@ public class MainMenuView extends StackPane implements SceneLifecycle {
         StackPane.setAlignment(footer, Pos.BOTTOM_CENTER);
 
         // 覆盖层：道具图鉴、难度选择与设置（默认隐藏）
-        galleryContent = createGalleryContent();
+        galleryContent = createGalleryContent(progress);
+        achievementContent = createAchievementContent(progress);
         difficultyContent = createDifficultyContent(settings, onStart);
         settingsContent = new SettingsOverlay(settings, nicknameSupplier,
                 () -> hideOverlay(settingsContent, this::fadeInMenu));
@@ -140,7 +151,7 @@ public class MainMenuView extends StackPane implements SceneLifecycle {
         overlay.setManaged(false);
 
         // 层叠顺序：背景画布 → 菜单内容 → 底部信息 → 覆盖层 → 双界遮罩
-        getChildren().addAll(menuContent, footer, galleryContent, difficultyContent, settingsContent, overlay);
+        getChildren().addAll(menuContent, footer, galleryContent, achievementContent, difficultyContent, settingsContent, overlay);
 
         // Esc 收起覆盖层（§4.3：Esc = 返回）
         setOnKeyPressed(event -> {
@@ -153,6 +164,8 @@ public class MainMenuView extends StackPane implements SceneLifecycle {
                 hideOverlay(difficultyContent, this::fadeInMenu);
             } else if (galleryContent.isVisible()) {
                 hideOverlay(galleryContent, this::fadeInMenu);
+            } else if (achievementContent.isVisible()) {
+                hideOverlay(achievementContent, this::fadeInMenu);
             }
         });
 
@@ -176,10 +189,11 @@ public class MainMenuView extends StackPane implements SceneLifecycle {
         startButton.setDefaultButton(true); // Enter 快捷开始（打开难度面板）
 
         Button galleryButton = createMenuButton("道具图鉴", () -> showOverlay(galleryContent));
+        Button achievementButton = createMenuButton("成就", () -> showOverlay(achievementContent));
         Button settingsButton = createMenuButton("设置", () -> showOverlay(settingsContent));
         Button quitButton = createMenuButton("退出", () -> playExitTransition(onQuit));
 
-        VBox box = new VBox(22.0, header, divider, startButton, galleryButton, settingsButton, quitButton);
+        VBox box = new VBox(18.0, header, divider, startButton, galleryButton, achievementButton, settingsButton, quitButton);
         box.getStyleClass().add("menu-panel");
         box.setAlignment(Pos.CENTER);
         box.setFillWidth(false);
@@ -189,32 +203,89 @@ public class MainMenuView extends StackPane implements SceneLifecycle {
     }
 
     /** 构建道具图鉴覆盖层：占位展示道具分类（§8.2；详细图鉴内容随第 6 天道具系统完善） */
-    private VBox createGalleryContent() {
+    private VBox createGalleryContent(PlayerProgress progress) {
         Label galleryTitle = new Label("道具图鉴");
         galleryTitle.getStyleClass().add("overlay-title");
-
         GridPane grid = new GridPane();
-        grid.setHgap(18.0);
-        grid.setVgap(16.0);
-        grid.setAlignment(Pos.CENTER); // 图鉴表整体水平居中
-        int row = 0;
-        row = addKeyRow(grid, row, "光属性", "强化光形态攻击、远程手感（如·晨曦之矛）");
-        row = addKeyRow(grid, row, "影属性", "强化影形态近战、速度、吸血（如·暮色斗篷）");
-        row = addKeyRow(grid, row, "双属性", "两种形态都强化，但数值较低（如·裂界护符）");
-        row = addKeyRow(grid, row, "通用", "提高血量、移速、拾取范围（如·相位容器）");
-
-        Label note = new Label("提示：具体道具将随第 6 天道具系统逐一加入，此处仅为分类预览。");
+        grid.setHgap(14.0); grid.setVgap(12.0); grid.setAlignment(Pos.CENTER);
+        EquipmentType[] equipment = EquipmentType.values();
+        for (int index = 0; index < equipment.length; index++) grid.add(equipmentCard(equipment[index], progress), index % 3, index / 3);
+        ScrollPane scroll = new ScrollPane(grid);
+        scroll.setFitToWidth(true); scroll.setPrefViewportHeight(510); scroll.getStyleClass().add("progress-scroll");
+        Label note = new Label("只展示本档案实际拾取过的装备；同名装备会叠加，强化规则在每张卡片中列出。");
         note.getStyleClass().add("hint-text");
 
         Button backButton = createMenuButton("返回菜单", () -> hideOverlay(galleryContent, this::fadeInMenu));
 
-        VBox box = new VBox(26.0, galleryTitle, grid, note, backButton);
+        VBox box = new VBox(16.0, galleryTitle, scroll, note, backButton);
         box.setAlignment(Pos.CENTER);
         box.setFillWidth(false);
         box.setMaxWidth(VBox.USE_PREF_SIZE);
         box.setVisible(false);
         box.setManaged(false);
         return box;
+    }
+
+    private VBox createAchievementContent(PlayerProgress progress) {
+        Label title = new Label("成就"); title.getStyleClass().add("overlay-title");
+        VBox rows = new VBox(12.0); rows.setAlignment(Pos.CENTER_LEFT); rows.setMaxWidth(560);
+        for (Achievement achievement : Achievement.values()) {
+            boolean unlocked = progress.isUnlocked(achievement);
+            Label row = new Label(unlocked ? achievement.title() + "  —  " + achievement.description() : "未解锁成就");
+            ImageView icon = new ImageView(unlocked ? achievementIcon(achievement) : null);
+            icon.setFitWidth(38); icon.setFitHeight(38); icon.setPreserveRatio(true);
+            HBox entry = new HBox(12, unlocked ? icon : new Label("◇"), row);
+            entry.setAlignment(Pos.CENTER_LEFT);
+            entry.getStyleClass().add(unlocked ? "achievement-unlocked" : "achievement-locked");
+            rows.getChildren().add(entry);
+        }
+        Label note = new Label("未解锁的成就不会透露达成条件。击败首领或完成对应难度通关后将永久记录。");
+        note.getStyleClass().add("hint-text");
+        Button back = createMenuButton("返回菜单", () -> hideOverlay(achievementContent, this::fadeInMenu));
+        VBox box = new VBox(24, title, rows, note, back); box.setAlignment(Pos.CENTER); box.setVisible(false); box.setManaged(false);
+        return box;
+    }
+
+    private VBox equipmentCard(EquipmentType equipment, PlayerProgress progress) {
+        boolean discovered = progress.isDiscovered(equipment);
+        Node icon = discovered ? equipmentIcon(equipment) : new Label("?");
+        if (icon instanceof ImageView image) {
+            image.setFitWidth(46); image.setFitHeight(46); image.setPreserveRatio(true);
+        } else icon.getStyleClass().add("equipment-card-title");
+        Label title = new Label(discovered ? equipment.displayName() + " · " + equipment.affinity() : "未发现装备");
+        title.getStyleClass().add("equipment-card-title");
+        String details = discovered ? equipment.description() + "\n同名强化：" + stackDescription(equipment) : "拾取后解锁图标与属性说明";
+        Label detail = new Label(details); detail.setWrapText(true); detail.setMaxWidth(210); detail.getStyleClass().add("equipment-card-detail");
+        VBox card = new VBox(5, icon, title, detail); card.setAlignment(Pos.CENTER); card.getStyleClass().add(discovered ? "equipment-card" : "equipment-card-locked");
+        return card;
+    }
+
+    private static String stackDescription(EquipmentType equipment) {
+        return switch (equipment) {
+            case PHASE_VESSEL -> "每件再 +12 护盾上限";
+            case WAYFARER_HEART -> "每件再 +20% 最大生命";
+            default -> "数值效果按件数叠加；武器同轮同时触发";
+        };
+    }
+
+    private static ImageView equipmentIcon(EquipmentType equipment) {
+        String name = equipment.assetId() == null
+                ? (equipment.ordinal() < 3 ? "weapons_v1.png" : "equipment_v1.png")
+                : "equipment/" + equipment.assetId() + ".png";
+        var resource = MainMenuView.class.getResource("/com/phantomcorridor/ui/" + name);
+        Image image = resource == null ? null : new Image(resource.toExternalForm(), false);
+        ImageView view = new ImageView(image);
+        if (image != null && equipment.assetId() == null) {
+            double cellWidth = image.getWidth() / 3.0;
+            view.setViewport(new Rectangle2D((equipment.ordinal() % 3) * cellWidth, 0, cellWidth, image.getHeight()));
+        }
+        return view;
+    }
+
+    private static Image achievementIcon(Achievement achievement) {
+        var resource = MainMenuView.class.getResource("/com/phantomcorridor/ui/achievements/"
+                + achievement.iconId() + ".png");
+        return resource == null ? null : new Image(resource.toExternalForm(), false);
     }
 
     /**
@@ -364,32 +435,47 @@ public class MainMenuView extends StackPane implements SceneLifecycle {
             return;
         }
         transitionLocked = true;
-        if (panel instanceof SettingsOverlay settingsOverlay) {
+        if (panel == galleryContent) {
+            panel = replaceProgressPanel(galleryContent, createGalleryContent(progress));
+            galleryContent = panel;
+        } else if (panel == achievementContent) {
+            panel = replaceProgressPanel(achievementContent, createAchievementContent(progress));
+            achievementContent = panel;
+        }
+        final VBox displayedPanel = panel;
+        if (displayedPanel instanceof SettingsOverlay settingsOverlay) {
             settingsOverlay.refreshProfile();
         }
         // 覆盖层打开时「开始游戏」不再吃 Enter，避免在设置/图鉴里按回车直接开局。
         startButton.setDefaultButton(false);
         if (normalDifficultyButton != null) {
-            normalDifficultyButton.setDefaultButton(panel == difficultyContent);
+            normalDifficultyButton.setDefaultButton(displayedPanel == difficultyContent);
         }
         FadeTransition out = new FadeTransition(Duration.millis(150.0), menuContent);
         out.setToValue(0.0);
         out.setOnFinished(event -> {
             menuContent.setVisible(false);
             menuContent.setManaged(false);
-            panel.setVisible(true);
-            panel.setManaged(true);
-            panel.setOpacity(0.0);
-            panel.setTranslateY(26.0);
-            FadeTransition in = new FadeTransition(Duration.millis(OVERLAY_MS), panel);
+            displayedPanel.setVisible(true);
+            displayedPanel.setManaged(true);
+            displayedPanel.setOpacity(0.0);
+            displayedPanel.setTranslateY(26.0);
+            FadeTransition in = new FadeTransition(Duration.millis(OVERLAY_MS), displayedPanel);
             in.setToValue(1.0);
-            TranslateTransition slide = new TranslateTransition(Duration.millis(OVERLAY_MS), panel);
+            TranslateTransition slide = new TranslateTransition(Duration.millis(OVERLAY_MS), displayedPanel);
             slide.setToY(0.0);
             ParallelTransition transition = new ParallelTransition(in, slide);
             transition.setOnFinished(done -> transitionLocked = false);
             transition.play();
         });
         out.play();
+    }
+
+    /** 每次打开进度页都重建，确保刚解锁的成就和装备立即可见。 */
+    private VBox replaceProgressPanel(VBox previous, VBox replacement) {
+        int index = getChildren().indexOf(previous);
+        if (index >= 0) getChildren().set(index, replacement);
+        return replacement;
     }
 
     /** 收起覆盖层：覆盖层淡出 → 菜单内容重新显示（可指定淡入回调） */

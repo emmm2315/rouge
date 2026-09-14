@@ -17,6 +17,8 @@ import com.phantomcorridor.model.room.RoomContentSystem;
 import com.phantomcorridor.model.room.RoomNavigationSystem;
 import com.phantomcorridor.model.room.Room;
 import java.util.List;
+import java.util.EnumSet;
+import java.util.Set;
 
 /** 一局游戏的聚合状态，协调移动、战斗、房间交互与结算。 */
 public final class GameSession {
@@ -35,6 +37,8 @@ public final class GameSession {
     private int floor = 1;
     private Difficulty difficulty = Difficulty.NORMAL;
     private boolean runCleared;
+    private boolean bossDefeated;
+    private final Set<EnemyKind> defeatedBossKinds = EnumSet.noneOf(EnemyKind.class);
     private double phasePulseVisibleRemaining;
     private double aimX;
     private double aimY;
@@ -79,6 +83,8 @@ public final class GameSession {
         player.setDifficulty(this.difficulty);
         floor = 1;
         runCleared = false;
+        bossDefeated = false;
+        defeatedBossKinds.clear();
         clearPendingInput();
         aimX = player.getX() + 1.0;
         aimY = player.getY();
@@ -152,7 +158,6 @@ public final class GameSession {
         aimY = targetY;
         // 形态右键机制在移动之前结算：蓄力会压低移速，必须当帧生效。
         stance.update(player, attackSystem, attacking, aimX, aimY);
-        navigation.setHiddenExitLocked(isInCombat());
         double movementStartX = player.getX();
         double movementStartY = player.getY();
         // 冲刺优先于普通移动：冲刺期间忽略方向输入，位移完全由冲刺方向决定。
@@ -243,12 +248,14 @@ public final class GameSession {
             roomAnnouncementRemaining = 2.0;
         }
         int kills = enemies.consumeKills();
+        defeatedBossKinds.addAll(enemies.consumeDefeatedBosses());
         if (kills > 0) totalKills += kills;
         int phaseReward = enemies.consumePhaseEnergyReward();
         if (current.type() == RoomType.BATTLE || current.type() == RoomType.BOSS
                 || current.type() == RoomType.EVENT) {
             current.setCleared(enemies.isRoomCleared());
         }
+        if (current.type() == RoomType.BOSS && current.isCleared()) bossDefeated = true;
         if (phaseReward > 0) player.restorePhaseEnergy(phaseReward);
         if (kills > 0) player.addCoins(kills + Math.floorMod((int) (dungeonSeed + kills * 13L), kills * 3 + 1));
     }
@@ -388,6 +395,11 @@ public final class GameSession {
 
     /** 是否已经打通最后一层：渲染层据此显示通关界面。 */
     public boolean isRunCleared() { return runCleared; }
+    /** 本局是否至少已击败一名首领。 */
+    public boolean hasDefeatedBoss() { return bossDefeated; }
+    /** 本局已击败的首领种类，供档案累积“全首领”进度。 */
+    public Set<EnemyKind> getDefeatedBossKinds() { return Set.copyOf(defeatedBossKinds); }
+    public java.util.Set<EquipmentType> getCollectedEquipment() { return roomContent.collectedEquipment(); }
 
     /** 当前房间是否站着通往下一层的传送门。 */
     public boolean isPortalVisible() { return navigation.getCurrentRoom().hasPortal(); }

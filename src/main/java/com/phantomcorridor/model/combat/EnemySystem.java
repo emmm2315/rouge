@@ -21,9 +21,10 @@ import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.Map;
 import java.util.Random;
-import java.util.Set;
 
 /**
  * 共享敌人生成、AI、属性伤害以及清房门禁的纯逻辑系统。
@@ -114,6 +115,7 @@ public final class EnemySystem {
     public boolean isBetweenWaves() { return waveDelay >= 0.0; }
 
     private int killsSinceLastRead;
+    private final Set<EnemyKind> defeatedBossesSinceLastRead = EnumSet.noneOf(EnemyKind.class);
     /** 最近一批非召唤敌人击杀对应的相位能量奖励。 */
     private int phaseEnergySinceLastRead;
     private int summonCallsSinceLastRead;
@@ -142,6 +144,7 @@ public final class EnemySystem {
         consumedHitIds.clear();
         activeRoomId = -1;
         killsSinceLastRead = 0;
+        defeatedBossesSinceLastRead.clear();
         phaseEnergySinceLastRead = 0;
         summonCallsSinceLastRead = 0;
         phaseTransitionsSinceLastRead = 0;
@@ -280,6 +283,7 @@ public final class EnemySystem {
                     phaseEnergySinceLastRead += enemy.getKind().phaseEnergyReward();
                 }
                 bossFell |= enemy.isBoss();
+                if (enemy.isBoss()) defeatedBossesSinceLastRead.add(enemy.getKind());
                 iterator.remove();
                 continue;
             }
@@ -2351,6 +2355,12 @@ public final class EnemySystem {
     public boolean isRoomCleared() { return enemies.isEmpty() && currentWave >= totalWaves; }
     public int getCount(WorldType world) { return (int) enemies.stream().filter(enemy -> enemy.getWorld() == world).count(); }
     public int consumeKills() { int result = killsSinceLastRead; killsSinceLastRead = 0; return result; }
+    /** 消费本帧倒下的首领种类；用于持久化图鉴与成就进度。 */
+    public Set<EnemyKind> consumeDefeatedBosses() {
+        Set<EnemyKind> result = EnumSet.copyOf(defeatedBossesSinceLastRead);
+        defeatedBossesSinceLastRead.clear();
+        return result;
+    }
     public int consumePhaseEnergyReward() {
         int result = phaseEnergySinceLastRead;
         phaseEnergySinceLastRead = 0;
