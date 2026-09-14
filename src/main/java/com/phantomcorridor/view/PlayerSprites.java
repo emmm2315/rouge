@@ -27,6 +27,20 @@ final class PlayerSprites {
                 images[i] = new Image(resource.toExternalForm(), false);
                 if (images[i].isError()) throw new IllegalStateException("Invalid player frame: " + path);
             }
+            if (action.equals("move")) {
+                double[] reference = headAnchor(images[0]);
+                for (int i = 1; i < images.length; i++) {
+                    double[] anchor = headAnchor(images[i]);
+                    Canvas canvas = new Canvas(320, 256);
+                    // Translation only, calibrated at load time: stabilize the hood without
+                    // resizing the body or flattening the leg/cape silhouette into a box.
+                    canvas.getGraphicsContext2D().drawImage(images[i],
+                            Math.rint(reference[0] - anchor[0]), Math.rint(reference[1] - anchor[1]));
+                    SnapshotParameters parameters = new SnapshotParameters();
+                    parameters.setFill(Color.TRANSPARENT);
+                    images[i] = canvas.snapshot(parameters, null);
+                }
+            }
             if (action.equals("idle")) {
                 String referencePath = PlayerAnimationCatalog.ROOT + "body/" + form
                         + "/move/" + direction + "/frame_00.png";
@@ -55,10 +69,9 @@ final class PlayerSprites {
         int index = clip.frame(time);
         if (action.equals("idle")) index = 0;
         if (action.equals("move")) {
-            // These are four progression poses, not a seamless high-frequency run cycle.
-            // Walk them forwards and backwards to avoid the abrupt last-to-first jump.
-            int phase = (int) (Math.max(0, time) * 9.0) % (2 * frames.length - 2);
-            index = phase < frames.length ? phase : 2 * frames.length - 2 - phase;
+            // For locomotion the model supplies travelled cycles, not elapsed seconds.
+            // Preserve the authored forward footfall order; never run a gait backwards.
+            index = (int) (Math.max(0, time) * frames.length) % frames.length;
         }
         return frames[index];
     }
@@ -76,6 +89,18 @@ final class PlayerSprites {
         }
         if (bottom < top) throw new IllegalStateException("Player pose has no visible body");
         return new int[]{top, bottom};
+    }
+
+    private static double[] headAnchor(Image image) {
+        int top = verticalBounds(image)[0];
+        double sumX = 0, count = 0;
+        var pixels = image.getPixelReader();
+        for (int y = top + 4; y < Math.min(image.getHeight(), top + 34); y++) {
+            for (int x = 0; x < image.getWidth(); x++) {
+                if ((pixels.getArgb(x, y) >>> 24) > 100) { sumX += x; count++; }
+            }
+        }
+        return new double[]{count == 0 ? 160 : sumX / count, top};
     }
 
     static Image body(Player player, boolean light) {

@@ -230,49 +230,17 @@ public final class GameRenderer {
     }
 
     /**
-     * 首领房清空后出现的层间传送门：一圈旋转的裂隙 + 目标层数。
+     * 首领房清空后的石质界隙门，门脚位置与传送交互中心一致。
      *
-     * <p>用玩家的动画计时做旋转，不额外引入渲染状态。
+     * <p>使用独立的模拟时钟，角色切换动作不会重置门内流光。
      */
     private void drawPortal(GraphicsContext g, GameSession session) {
         if (!session.isPortalVisible()) return;
         Room room = session.getNavigation().getCurrentRoom();
         double x = (room.minX() + room.maxX()) / 2.0;
         double y = (room.minY() + room.maxY()) / 2.0;
-        double time = session.getPlayer().getAnimationTime();
-        double pulse = 1.0 + Math.sin(time * 2.6) * 0.06;
-        double outer = 86.0 * pulse;
-        double inner = 54.0 * pulse;
-        g.setFill(Color.rgb(6, 4, 12, 0.9));
-        g.fillOval(x - outer, y - outer, outer * 2, outer * 2);
-        for (int i = 0; i < 3; i++) {
-            double start = Math.toDegrees(time * (2.2 + i * 0.7) + i * 120.0);
-            g.setStroke(Color.color(0.72, 0.42, 1.0, 0.9 - i * 0.18));
-            g.setLineWidth(7.0 - i * 1.6);
-            g.strokeArc(x - outer, y - outer, outer * 2, outer * 2, start, 108, ArcType.OPEN);
-        }
-        g.setFill(new RadialGradient(0, 0, 0.5, 0.5, 0.5, true, CycleMethod.NO_CYCLE,
-                new Stop(0.0, Color.web("#fff3c4")), new Stop(0.55, Color.web("#a86bff")),
-                new Stop(1.0, Color.color(0.25, 0.10, 0.4, 0.15))));
-        g.fillOval(x - inner, y - inner, inner * 2, inner * 2);
-        g.setStroke(Color.web("#ffe9a8"));
-        g.setLineWidth(3.0);
-        g.strokeOval(x - inner, y - inner, inner * 2, inner * 2);
-        boolean lastFloor = session.getFloor() >= session.getTotalFloors();
-        g.setTextAlign(TextAlignment.CENTER);
-        g.setFill(Color.web("#241033"));
-        g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 22));
-        g.fillText(lastFloor ? "通关" : "第 " + (session.getFloor() + 1) + " 层",
-                x, y + 8);
-        g.setTextAlign(TextAlignment.LEFT);
-        g.setFill(Color.rgb(255, 240, 200, 0.9));
-        g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 14));
-        g.setTextAlign(TextAlignment.CENTER);
-        g.fillText(session.getFloor() + " / " + session.getTotalFloors() + " 层已通", x, y + outer + 26);
-        g.fillText("走近按 E 传送", x, y + outer + 46);
-        g.setTextAlign(TextAlignment.LEFT);
+        PortalRenderer.draw(g, x, y, session.getVisualTime(), session.getFloor(), session.getTotalFloors());
     }
-
     /** 形态限定隐藏出口：用金色菱形提示位置，跨门时才由导航检查形态。 */
     private void drawHiddenExit(GraphicsContext g, GameSession session) {
         Room room = session.getNavigation().getCurrentRoom();

@@ -63,6 +63,28 @@ class PlayerRenderPreviewTest {
                     }
                 }
                 save(sheet, "target/player-v3-contact-sheet.png");
+                Canvas portal = new Canvas(720, 420);
+                var pg = portal.getGraphicsContext2D();
+                pg.setFill(Color.web("#28252d")); pg.fillRect(0, 0, 720, 420);
+                PortalRenderer.draw(pg, 190, 235, 3.2, 1, 5);
+                PortalRenderer.draw(pg, 530, 235, 3.2, 5, 5);
+                save(portal, "target/portal-style-preview.png");
+                Canvas walk = new Canvas(640, 8 * 150);
+                var wg = walk.getGraphicsContext2D();
+                wg.setFill(Color.web("#282630")); wg.fillRect(0, 0, 640, 1200);
+                for (int row = 0; row < 8; row++) {
+                    int direction = row % 4;
+                    double wx = direction == 2 ? -1 : direction == 3 ? 1 : 0;
+                    double wy = direction == 0 ? 1 : direction == 1 ? -1 : 0;
+                    for (int col = 0; col < 4; col++) {
+                        wg.drawImage(PlayerSprites.frame(row < 4, "move", wx, wy, col / 4.0),
+                                col * 160, row * 150 + 20, 160, 128);
+                        wg.setFill(Color.WHITE);
+                        wg.fillText((row < 4 ? "light" : "shadow") + " / " + direction + " / " + col,
+                                col * 160 + 4, row * 150 + 15);
+                    }
+                }
+                save(walk, "target/player-walk-cycle-preview.png");
                 for (boolean light : new boolean[]{true, false}) {
                     for (boolean finisher : new boolean[]{false, true}) {
                         session.newRun("v3-preview");

@@ -48,6 +48,11 @@ public final class Player {
     private WorldType currentWorld;
     private PlayerAnimationState animationState;
     private double animationTime;
+    private double walkDistance;
+    /** Two footfalls per 100 world pixels; the phase survives stopping and turning. */
+    public void advanceWalkDistance(double distance) {
+        walkDistance = (walkDistance + Math.max(0, distance)) % 100.0;
+    }
     private double attackAnimationRemaining;
     private double attackAnimationWindup;
     private double abilityAnimationRemaining;
@@ -101,6 +106,7 @@ public final class Player {
         this.currentWorld = WorldType.LIGHT;
         this.animationState = PlayerAnimationState.IDLE;
         this.animationTime = 0.0;
+        this.walkDistance = 0.0;
         this.attackAnimationRemaining = 0.0;
         this.attackAnimationWindup = 0.0;
         this.abilityAnimationRemaining = 0.0;
@@ -803,6 +809,7 @@ public final class Player {
     public PlayerAnimationState getAnimationState() { return animationState; }
     public double getAnimationTime() { return animationTime; }
     public double getBodyAnimationTime() {
+        if (animationState == PlayerAnimationState.MOVING) return walkDistance / 100.0;
         if (animationState == PlayerAnimationState.FINISHER || animationState == PlayerAnimationState.SKILL) {
             String action = finisherAnimation ? "finisher_cast" : "attack";
             double clipDuration = PlayerAnimationCatalog.clip(currentWorld == WorldType.LIGHT ? "light" : "shadow", action, "down").duration();

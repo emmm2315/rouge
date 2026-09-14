@@ -36,6 +36,8 @@ public final class GameSession {
     private double phasePulseVisibleRemaining;
     private double aimX;
     private double aimY;
+    private double visualTime;
+    public double getVisualTime() { return visualTime; }
     private String roomAnnouncement = "";
     private double roomAnnouncementRemaining;
     private boolean floorAnnouncement;
@@ -60,6 +62,7 @@ public final class GameSession {
     public void newRun(String configuredSeed, Difficulty difficulty) {
         player.reset(AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0);
         worldShift.reset();
+        visualTime = 0;
         abilities.reset();
         runSeed = MapGenerator.parseSeed(configuredSeed);
         this.difficulty = difficulty == null ? Difficulty.NORMAL : difficulty;
@@ -116,6 +119,7 @@ public final class GameSession {
 
     public void update(double dt, double movementX, double movementY,
                        double targetX, double targetY, boolean attacking) {
+        visualTime += Math.max(0, dt);
         worldShift.update(dt);
         phasePulseVisibleRemaining = Math.max(0.0, phasePulseVisibleRemaining - dt);
         roomAnnouncementRemaining = Math.max(0.0, roomAnnouncementRemaining - Math.max(0.0, dt));
@@ -145,6 +149,8 @@ public final class GameSession {
         }
         double actualMovementX = player.getX() - movementStartX;
         double actualMovementY = player.getY() - movementStartY;
+        if (!player.isDashing()) player.advanceWalkDistance(Math.min(Math.hypot(actualMovementX, actualMovementY),
+                player.movementSpeed() * Math.max(0, dt)));
         player.updateDash(dt);
         if (navigation.consumeRoomChanged()) {
             abilities.clearRoomEffects();
