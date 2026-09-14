@@ -38,6 +38,7 @@ public final class GameSession {
     private double aimY;
     private double visualTime;
     public double getVisualTime() { return visualTime; }
+    private int totalKills;
     private String roomAnnouncement = "";
     private double roomAnnouncementRemaining;
     private boolean floorAnnouncement;
@@ -63,6 +64,7 @@ public final class GameSession {
         player.reset(AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0);
         worldShift.reset();
         visualTime = 0;
+        totalKills = 0;
         abilities.reset();
         runSeed = MapGenerator.parseSeed(configuredSeed);
         this.difficulty = difficulty == null ? Difficulty.NORMAL : difficulty;
@@ -132,6 +134,7 @@ public final class GameSession {
         }
         aimX = targetX;
         aimY = targetY;
+        navigation.setHiddenExitLocked(isInCombat());
         double movementStartX = player.getX();
         double movementStartY = player.getY();
         // 冲刺优先于普通移动：冲刺期间忽略方向输入，位移完全由冲刺方向决定。
@@ -187,6 +190,7 @@ public final class GameSession {
             roomAnnouncementRemaining = 2.0;
         }
         int kills = enemies.consumeKills();
+        if (kills > 0) totalKills += kills;
         int phaseReward = enemies.consumePhaseEnergyReward();
         Room current = navigation.getCurrentRoom();
         if (current.type() == RoomType.BATTLE || current.type() == RoomType.BOSS
@@ -364,6 +368,8 @@ public final class GameSession {
         return !enemies.isRoomCleared();
     }
 
+    public int getTotalKills() { return totalKills; }
+
     /** 当前交互目标（地面拾取物）；渲染层用它给最近的那件物品画名称标签。 */
     public Pickup getInteractionTarget() {
         return roomContent.currentTarget(navigation.getCurrentRoom(), player);
@@ -394,7 +400,7 @@ public final class GameSession {
     /**
      * 当前交互目标是否是一件刚被 ESC 放弃的装备。
      *
-     * <p>渲染层据此不再画“E 换装”提示：面板已经关掉了，再提示可换装会让玩家反复按 E。
+     * <p>渲染层据此不再画“F 换装”提示：面板已经关掉了，再提示可换装会让玩家反复按 F。
      */
     public boolean isInteractionTargetDismissed() {
         Room current = navigation.getCurrentRoom();

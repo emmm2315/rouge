@@ -71,7 +71,7 @@ public final class GameConfig {
     public static final double SHADOW_ATTACK_COOLDOWN = 0.55;
     /**
      * 技能蓝量上限。沿用旧攻击充能字段以兼容道具容量与既有模型接口，
-     * 普攻不再扣除；Q/F 技能每次消耗 6 点，每 1.5 秒恢复 1 点。
+     * 普攻不再扣除；Q/E 技能每次消耗 6 点，每 1.5 秒恢复 1 点。
      */
     public static final int ATTACK_CHARGE_MAX = 16;
     public static final int LIGHT_ATTACK_CHARGE_COST = 1;
@@ -486,7 +486,7 @@ public final class GameConfig {
     /** 初始相位为零，需战斗或自然回复积攒。 */
     public static final double PHASE_ENERGY_INITIAL = 0.0;
 
-    /** 主动强化切界的相位费用；普通 Tab 切界免费。 */
+    /** 主动强化切界的相位费用；普通 Ctrl 切界免费。 */
     public static final double PHASE_ENERGY_PER_SWITCH = 100.0;
 
     /** 游戏模拟推进时自然回复的相位点数 / 秒。 */

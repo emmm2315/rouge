@@ -78,7 +78,7 @@ final class PortalRenderer {
         g.fillText(floor >= total ? "终途裂隙 · 通关" : "界隙之门 · 第 " + (floor + 1) + " 层", 0, 72);
         g.setFont(Font.font("Microsoft YaHei UI", 12));
         g.setFill(Color.web("#b6a5bf"));
-        g.fillText("走近按 E 穿越", 0, 92);
+        g.fillText("走近按 F 穿越", 0, 92);
         g.restore();
     }
     private PortalRenderer() { }

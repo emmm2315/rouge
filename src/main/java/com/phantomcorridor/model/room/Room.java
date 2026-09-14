@@ -112,7 +112,7 @@ public final class Room {
         return loot.hasContent() || hasUnopenedChest();
     }
 
-    /** 击败首领后出现的层间传送门：站在门前按 E 前往下一层。 */
+    /** 击败首领后出现的层间传送门：站在门前按 F 前往下一层。 */
     public boolean hasPortal() {
         return type == RoomType.BOSS && cleared;
     }

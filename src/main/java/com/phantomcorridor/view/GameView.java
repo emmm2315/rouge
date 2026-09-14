@@ -49,13 +49,25 @@ public final class GameView extends StackPane implements SceneLifecycle {
         shiftFlash.prefHeightProperty().bind(heightProperty());
 
         addEventFilter(KeyEvent.KEY_PRESSED, event -> {
-            if (event.getCode() == KeyCode.TAB) { keyPressed.accept(event.getCode()); event.consume(); }
+            if (event.getCode() == KeyCode.TAB || event.getCode() == KeyCode.CONTROL) {
+                keyPressed.accept(event.getCode()); event.consume();
+            }
         });
         addEventFilter(KeyEvent.KEY_RELEASED, event -> {
-            if (event.getCode() == KeyCode.TAB) { keyReleased.accept(event.getCode()); event.consume(); }
+            if (event.getCode() == KeyCode.TAB || event.getCode() == KeyCode.CONTROL) {
+                keyReleased.accept(event.getCode()); event.consume();
+            }
         });
-        setOnKeyPressed(event -> { if (event.getCode() != KeyCode.TAB) { keyPressed.accept(event.getCode()); event.consume(); } });
-        setOnKeyReleased(event -> { if (event.getCode() != KeyCode.TAB) { keyReleased.accept(event.getCode()); event.consume(); } });
+        setOnKeyPressed(event -> {
+            if (event.getCode() != KeyCode.TAB && event.getCode() != KeyCode.CONTROL) {
+                keyPressed.accept(event.getCode()); event.consume();
+            }
+        });
+        setOnKeyReleased(event -> {
+            if (event.getCode() != KeyCode.TAB && event.getCode() != KeyCode.CONTROL) {
+                keyReleased.accept(event.getCode()); event.consume();
+            }
+        });
         setOnMouseMoved(event -> pointerMoved.accept(logicalX(event.getX()), logicalY(event.getY())));
         setOnMouseDragged(event -> pointerMoved.accept(logicalX(event.getX()), logicalY(event.getY())));
         setOnMousePressed(event -> {
