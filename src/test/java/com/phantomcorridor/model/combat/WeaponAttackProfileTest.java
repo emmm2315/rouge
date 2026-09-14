@@ -265,7 +265,7 @@ class WeaponAttackProfileTest {
         assertTrue(attacks.getProjectiles().isEmpty(), "影界不该出现光弹");
         assertEquals(GameConfig.SHADOW_MELEE_ARC_DEGREES, attacks.getMeleeArcDegrees(), EPS,
                 "回到影界的基础扇形");
-        assertEquals(1.0, attacks.getCurrentProfile().coefficient(0), EPS, "基础影斩伤害 1.00");
+        assertEquals(1.20, attacks.getCurrentProfile().coefficient(0), EPS, "基础影斩伤害 1.20");
     }
 
     @Test

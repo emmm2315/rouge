@@ -86,9 +86,9 @@ public record AttackProfile(
                 1.0, 1.0, 1.0, 1.0, 0.0);
     }
 
-    /** 基础影斩：前方扇形、系数 1.0、间隔 1.0。 */
+    /** 基础影斩：前方扇形、系数 1.2、间隔 1.0。近身风险换取更高的单次伤害。 */
     public static AttackProfile baseShadow() {
-        return shadow(ProjectileShape.FANG, 1.0, GameConfig.SHADOW_MELEE_ARC_DEGREES, 1.0, 1.0, 0.0, 0.0);
+        return shadow(ProjectileShape.FANG, 1.20, GameConfig.SHADOW_MELEE_ARC_DEGREES, 1.0, 1.0, 0.0, 0.0);
     }
 
     /**
