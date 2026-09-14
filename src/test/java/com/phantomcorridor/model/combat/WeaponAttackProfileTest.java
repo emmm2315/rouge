@@ -124,6 +124,7 @@ class WeaponAttackProfileTest {
         Projectile core = attacks.getProjectiles().getFirst();
         assertEquals(Projectile.Behaviour.BURST, core.getBehaviour());
         assertEquals(0.0, core.getDamageCoefficient(), EPS, "光核本身没有接触伤害");
+        assertEquals(1.10, core.getBurstCoefficient(), EPS, "爆炸承担 1.10 的伤害系数");
         assertEquals(GameConfig.SOLAR_BURST_RADIUS, core.getEffectRadius(), EPS);
 
         double speed = Math.hypot(core.getVelocityX(), core.getVelocityY());

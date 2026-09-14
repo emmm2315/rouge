@@ -980,20 +980,30 @@ public final class GameRenderer {
         double centerX = AppConfig.VIEW_WIDTH / 2.0;
         double centerY = AppConfig.VIEW_HEIGHT / 2.0;
         g.setFill(Color.rgb(18, 12, 28, .97));
-        g.fillRoundRect(centerX - 300, centerY - 160, 600, 330, 24, 24);
+        g.fillRoundRect(centerX - 300, centerY - 190, 600, 390, 24, 24);
         g.setStroke(Color.web("#a878c7")); g.setLineWidth(2.0);
-        g.strokeRoundRect(centerX - 300, centerY - 160, 600, 330, 24, 24);
+        g.strokeRoundRect(centerX - 300, centerY - 190, 600, 390, 24, 24);
         g.setTextAlign(TextAlignment.CENTER);
         g.setFill(Color.web("#f0d7e8"));
         g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 42));
-        g.fillText("倒下了", AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0 - 24);
-        g.setFont(Font.font("Microsoft YaHei UI", 18));
+        g.fillText("倒下了", centerX, centerY - 104);
+        g.setFont(Font.font("Microsoft YaHei UI", 17));
         g.setFill(Color.web("#c9b4ca"));
-        g.fillText("第 " + session.getFloor() + " 层探索结束 · 金币 " + session.getCoins(),
-                AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0 + 18);
+        g.fillText("第 " + session.getFloor() + " 层探索结束", centerX, centerY - 70);
+        g.setFont(Font.font("Microsoft YaHei UI", 15));
+        g.setFill(Color.web("#e0cfea"));
+        g.fillText("击杀 " + session.getTotalKills() + "    用时 " + formatDuration(session.getVisualTime()),
+                centerX, centerY - 38);
+        g.fillText("金币 " + session.getCoins() + "    装备 " + session.getPlayer().getEquipment().size() + "/3",
+                centerX, centerY - 12);
         drawDeathButton(g, session, centerX - 170, centerY + 44, 140, 50, "重新开始", false);
         drawDeathButton(g, session, centerX + 30, centerY + 44, 140, 50, "返回主菜单", true);
         g.setTextAlign(TextAlignment.LEFT);
+    }
+
+    private static String formatDuration(double seconds) {
+        int total = (int) Math.max(0, Math.round(seconds));
+        return String.format("%02d:%02d", total / 60, total % 60);
     }
 
     /** 从独立 PNG 帧加载，不依赖旧版“固定四格图集”的假设。 */
@@ -1112,8 +1122,13 @@ public final class GameRenderer {
         g.fillText("穿 越 完 成", AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0 - 34);
         g.setFont(Font.font("Microsoft YaHei UI", 19));
         g.setFill(Color.web("#e5d3f5"));
-        g.fillText(session.getTotalFloors() + " 层裂隙全部走尽 · 金币 " + session.getCoins(),
-                AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0 + 12);
+        g.fillText(session.getTotalFloors() + " 层裂隙全部走尽",
+                AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0 + 8);
+        g.setFont(Font.font("Microsoft YaHei UI", 16));
+        g.setFill(Color.web("#e8d8f7"));
+        g.fillText("击杀 " + session.getTotalKills() + " · 用时 " + formatDuration(session.getVisualTime())
+                        + " · 金币 " + session.getCoins(),
+                AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0 + 36);
         g.setFont(Font.font("Microsoft YaHei UI", 16));
         g.setFill(Color.web("#c9b4ca"));
         g.fillText("[R] 再来一局        [M] 返回主菜单",
@@ -1196,7 +1211,7 @@ public final class GameRenderer {
         if (selected) {
             g.setFill(Color.web("#fff2b0"));
             g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 12));
-            g.fillText(affordable ? "再按 E 确认" : "金币不足", x - 2, y + 40);
+            g.fillText(affordable ? "再按 F 确认" : "金币不足", x - 2, y + 40);
         }
     }
 
@@ -1204,7 +1219,7 @@ public final class GameRenderer {
         String prompt = session.getInteractionPrompt();
         if (prompt.isEmpty()) return;
         Player p = session.getPlayer();
-        boolean confirming = prompt.startsWith("E  确认") || prompt.startsWith("金币不足");
+        boolean confirming = prompt.startsWith("F  确认") || prompt.startsWith("金币不足");
         double width = 24 + prompt.length() * 13.0;
         // 提示框贴着角色，但不能顶出画布：商店确认文案比旧提示长不少。
         double x = Math.max(8, Math.min(p.getX() + 24, AppConfig.VIEW_WIDTH - width - 8));
@@ -2232,7 +2247,7 @@ public final class GameRenderer {
         // 两个面板各说一半，玩家才分得清哪一份是自己带的、哪一份是捡来的。
         g.setFill(Color.web("#a99bb2"));
         g.setFont(Font.font("Microsoft YaHei UI", 12));
-        g.fillText("Q/F 技能　R 终结技　Tab 切界", HUD_X + 14, HUD_Y + 145);
+        g.fillText("Q/E 技能　R 终结技　Ctrl 切界　F 交互", HUD_X + 14, HUD_Y + 145);
 
         drawAbilityHudIcons(g, session, light);
         drawWorldBadge(g, domain, light);
@@ -2248,7 +2263,7 @@ public final class GameRenderer {
         var abilities = session.getAbilities();
         String form = light ? "light" : "shadow";
         String[] keys = {form + "_skill_01", form + "_skill_02", form + "_finisher"};
-        String[] labels = {"Q", "F", "R"};
+        String[] labels = {"Q", "E", "R"};
         double size = 30.0;
         for (int i = 0; i < keys.length; i++) {
             double x = HUD_X + 14 + i * 48.0;
@@ -2331,7 +2346,7 @@ public final class GameRenderer {
         g.setTextAlign(TextAlignment.CENTER);
         g.setFill(light ? Color.rgb(237, 210, 156, 0.56) : Color.rgb(198, 169, 230, 0.58));
         g.setFont(Font.font("Microsoft YaHei UI", 13));
-        g.fillText("WASD 移动 · 左键普攻 · Q/F 技能 · R 终结技 · 空格闪避 · Tab 切界 · Shift+Tab 强化切界 · E 交互 · 1-3 丢装备 · Esc 暂停",
+        g.fillText("WASD 移动 · 左键普攻 · Q/E 技能 · R 终结技 · 空格闪避 · Ctrl 切界 · F 交互 · 1-3 丢装备 · Esc 暂停",
                 AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT - 24.0);
         g.setTextAlign(TextAlignment.LEFT);
     }

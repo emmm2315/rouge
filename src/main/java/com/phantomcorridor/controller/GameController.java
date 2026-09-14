@@ -130,11 +130,17 @@ public final class GameController {
         }
         switch (key) {
             case SHIFT -> modifierHeld = true;
+            case CONTROL -> {
+                if (!shiftHeld && session.tryShiftWorld(modifierHeld)) {
+                    view.playWorldShift(session.getPlayer().getCurrentWorld());
+                }
+                shiftHeld = true;
+            }
             case Q -> {
                 if (!skillHeld) session.tryUseAbility(false, aimX, aimY);
                 skillHeld = true;
             }
-            case F -> {
+            case E -> {
                 if (!skill2Held) session.tryUseSkill(1, aimX, aimY);
                 skill2Held = true;
             }
@@ -146,13 +152,7 @@ public final class GameController {
             case S, DOWN -> input.setDown(true);
             case A, LEFT -> input.setLeft(true);
             case D, RIGHT -> input.setRight(true);
-            case TAB -> {
-                if (!shiftHeld && session.tryShiftWorld(modifierHeld)) {
-                    view.playWorldShift(session.getPlayer().getCurrentWorld());
-                }
-                shiftHeld = true;
-            }
-            case E -> {
+            case F -> {
                 // 长按会连发 keyPressed：交互（尤其商店的二次确认）必须一次按下只算一次。
                 if (!interactHeld) session.requestInteract();
                 interactHeld = true;
@@ -174,15 +174,15 @@ public final class GameController {
     private void keyReleased(KeyCode key) {
         switch (key) {
             case SHIFT -> modifierHeld = false;
+            case CONTROL -> shiftHeld = false;
             case Q -> skillHeld = false;
-            case F -> skill2Held = false;
+            case E -> skill2Held = false;
             case R -> finisherHeld = false;
             case W, UP -> input.setUp(false);
             case S, DOWN -> input.setDown(false);
             case A, LEFT -> input.setLeft(false);
             case D, RIGHT -> input.setRight(false);
-            case TAB -> shiftHeld = false;
-            case E -> interactHeld = false;
+            case F -> interactHeld = false;
             case SPACE -> dashHeld = false;
             default -> { }
         }

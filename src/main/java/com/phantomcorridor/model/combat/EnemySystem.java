@@ -1176,7 +1176,7 @@ public final class EnemySystem {
     private void resolveProjectileHit(Player player, Projectile projectile, Enemy hit) {
         if (projectile.getBehaviour() == Projectile.Behaviour.BURST) {
             // 光核没有独立的接触伤害：直接命中的敌人也只吃一次爆炸。
-            explodeAt(player, projectile.getX(), projectile.getY(), projectile.getDamageCoefficient(),
+            explodeAt(player, projectile.getX(), projectile.getY(), projectile.getBurstCoefficient(),
                     GameConfig.SOLAR_BURST_RADIUS, projectile.getWorld());
             projectile.expire();
             return;

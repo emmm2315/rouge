@@ -15,6 +15,8 @@ public final class RoomNavigationSystem {
     private DungeonMap map;
     private Room currentRoom;
     private boolean roomChanged;
+    /** 战斗未清空时禁止通过隐藏出口。 */
+    private boolean hiddenExitLocked;
     /**
      * 临时阻挡地形（根冠古树的根篱）。
      *
@@ -29,8 +31,11 @@ public final class RoomNavigationSystem {
         this.currentRoom.visit();
         discoverNeighbors(currentRoom);
         this.roomChanged = false;
+        this.hiddenExitLocked = false;
         this.temporaryWalls = List.of();
     }
+
+    public void setHiddenExitLocked(boolean locked) { this.hiddenExitLocked = locked; }
 
     /** 更新当前生效的临时阻挡地形；传 {@code null} 等同于清空。 */
     public void setTemporaryWalls(List<Wall> walls) {
@@ -202,6 +207,7 @@ public final class RoomNavigationSystem {
 
     private void transition(Player player, Direction direction) {
         if (currentRoom.hasHiddenExit(direction)) {
+            if (hiddenExitLocked) return;
             Room target = map.room(currentRoom.hiddenExitTargetId());
             if (target.requiredEntryForm() != null
                     && target.requiredEntryForm() != player.getCurrentWorld()) return;

@@ -417,6 +417,9 @@ public final class PlayerAttackSystem {
         }
         if (projectile.getBehaviour() == Projectile.Behaviour.BURST) {
             projectile.setEffectRadius(GameConfig.SOLAR_BURST_RADIUS);
+            // 光核的接触伤害是系数 0（damageCoefficients[0]），真正的伤害在爆炸那一份
+            // （damageCoefficients[1]）。爆炸结算读的是这个字段，而不是接触伤害系数。
+            projectile.setBurstCoefficient(profile.coefficient(1));
         }
     }
 

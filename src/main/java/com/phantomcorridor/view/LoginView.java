@@ -4,23 +4,21 @@ import com.phantomcorridor.controller.SceneLifecycle;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
-import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 
-import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 /** 登录视图：只收集输入并展示校验结果，校验规则由 LoginController 负责。 */
 public final class LoginView extends StackPane implements SceneLifecycle {
 
     private final DualWorldBackdrop backdrop = new DualWorldBackdrop();
     private final TextField nicknameField = new TextField();
-    private final PasswordField passwordField = new PasswordField();
     private final Label errorLabel = new Label();
 
-    public LoginView(BiConsumer<String, String> onSubmit) {
+    public LoginView(Consumer<String> onSubmit) {
         getStyleClass().add("login-pane");
         backdrop.setManaged(false);
 
@@ -41,21 +39,18 @@ public final class LoginView extends StackPane implements SceneLifecycle {
 
         nicknameField.getStyleClass().add("login-input");
         nicknameField.setPromptText("旅者昵称（必填）");
-        passwordField.getStyleClass().add("login-input");
-        passwordField.setPromptText("本地密码（可留空）");
-
         errorLabel.getStyleClass().add("form-error");
         errorLabel.setMinHeight(22.0);
 
         Button enterButton = new Button("踏入回廊");
         enterButton.getStyleClass().addAll("menu-button", "primary-button");
         enterButton.setDefaultButton(true);
-        enterButton.setOnAction(event -> onSubmit.accept(nicknameField.getText(), passwordField.getText()));
+        enterButton.setOnAction(event -> onSubmit.accept(nicknameField.getText()));
 
         Label privacy = new Label("仅用于本地档案识别 · 不连接服务器");
         privacy.getStyleClass().add("hint-text");
 
-        VBox fields = new VBox(14.0, nicknameField, passwordField, errorLabel, enterButton, privacy);
+        VBox fields = new VBox(14.0, nicknameField, errorLabel, enterButton, privacy);
         fields.setAlignment(Pos.CENTER);
         fields.setMaxWidth(360.0);
 
@@ -95,6 +90,5 @@ public final class LoginView extends StackPane implements SceneLifecycle {
     @Override
     public void onExit() {
         backdrop.onExit();
-        passwordField.clear();
     }
 }
