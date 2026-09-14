@@ -334,6 +334,18 @@ public final class EnemySystem {
             clearRootWalls();
             telegraphs.removeIf(telegraph -> telegraph.source().boss());
         }
+        // 清空一波的最后一名敌人时，先撤销危险实体，再推进伤害与视觉。
+        // 最后一波与波次间隙使用同一规则，保留死亡动画和受击飘字。
+        if (enemies.isEmpty()) {
+            attacks.clear();
+            telegraphs.clear();
+            activeCasts.clear();
+            summonRifts.clear();
+            clearRootWalls();
+            consumedHitIds.clear();
+            blinkFlash = null;
+            visualEffects.removeIf(effect -> !effect.isBodyAnimation() || !"death".equals(effect.effectId()));
+        }
         // 预警放在本体循环之后推进：释放当帧还能最后调整自己的判定范围
         // （甲虫顶撞撞墙提前停下时，警示带要跟着缩短，不能继续承诺一段走不到的直线）。
         updateTelegraphs(dt, player);
@@ -1130,12 +1142,12 @@ public final class EnemySystem {
             for (PlayerAttackSystem.MeleeStrike strike : playerAttacks.getMeleeStrikes()) {
                 for (Enemy enemy : enemies) {
                     if (enemy.isDead()) continue;
-                    if (!hasLineOfSight(player.getX(), player.getY(), enemy.getHitboxCenterX(),
+                    if (!hasLineOfSight(strike.x(), strike.y(), enemy.getHitboxCenterX(),
                             enemy.getHitboxCenterY(), WorldType.SHADOW)) continue;
-                    if (enemy.getLastMeleeHitId() == strike.attackId()) continue;
                     if (!meleeCovers(player, strike, enemy)) continue;
+                    if (!playerAttacks.registerMeleeHit(strike.attackId(), enemy)) continue;
                     int dealt = applyDamage(player, enemy, strike.coefficient(),
-                            player.getX(), player.getY());
+                            strike.x(), strike.y());
                     if (dealt > 0) {
                         enemy.setLastMeleeHitId(strike.attackId());
                         if (empowered) {
@@ -1225,8 +1237,8 @@ public final class EnemySystem {
 
     /** 近战扇形判定：目标要在本轮距离内、且落在扇形角度里（360° 就是全天周）。 */
     private static boolean meleeCovers(Player player, PlayerAttackSystem.MeleeStrike attacks, Enemy enemy) {
-        double dx = enemy.getHitboxCenterX() - player.getX();
-        double dy = enemy.getHitboxCenterY() - player.getY();
+        double dx = enemy.getHitboxCenterX() - attacks.x();
+        double dy = enemy.getHitboxCenterY() - attacks.y();
         double distance = Math.hypot(dx, dy);
         if (distance > attacks.range() + enemy.getHitboxRadius()) return false;
         double arc = attacks.arcDegrees();

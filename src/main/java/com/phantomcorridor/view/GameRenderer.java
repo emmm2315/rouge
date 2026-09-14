@@ -783,23 +783,23 @@ public final class GameRenderer {
         // Use the same radius and angle as hit detection. Clip the decorative sprite so
         // narrow weapon attacks cannot suggest damage outside their actual sector.
         g.beginPath();
-        g.moveTo(player.getX(), player.getY());
-        g.arc(player.getX(), player.getY(), range, range, start, arc);
+        g.moveTo(strike.x(), strike.y());
+        g.arc(strike.x(), strike.y(), range, range, start, arc);
         g.closePath();
         g.clip();
-        g.setFill(new RadialGradient(0, 0, player.getX(), player.getY(), range, false,
+        g.setFill(new RadialGradient(0, 0, strike.x(), strike.y(), range, false,
                 CycleMethod.NO_CYCLE, new Stop(0, Color.TRANSPARENT),
                 new Stop(0.65, Color.rgb(151, 56, 222, 0.06 * fade)),
                 new Stop(0.94, Color.rgb(191, 87, 255, 0.24 * fade)),
                 new Stop(1, Color.rgb(225, 162, 255, 0.10 * fade))));
-        g.fillOval(player.getX() - range, player.getY() - range, range * 2, range * 2);
+        g.fillOval(strike.x() - range, strike.y() - range, range * 2, range * 2);
         if (arc < 360.0 && SHADOW_SLASHES.length > 0) {
             Image slash = SHADOW_SLASHES[Math.min(SHADOW_SLASHES.length - 1,
                     (int) (strike.visualTime() / GameConfig.SHADOW_MELEE_VISIBLE_TIME * SHADOW_SLASHES.length))];
             double size = range * 2.0;
             g.save();
             g.setGlobalAlpha(fade);
-            g.translate(player.getX(), player.getY());
+            g.translate(strike.x(), strike.y());
             g.rotate(angle);
             g.drawImage(slash, -size / 2.0, -size * 0.5,
                     size, size * slash.getHeight() / Math.max(1.0, slash.getWidth()));
@@ -810,11 +810,11 @@ public final class GameRenderer {
         double bladeRadius = range - 5.0;
         g.setStroke(Color.rgb(178, 91, 242, 0.60 * fade));
         g.setLineWidth(9.0);
-        g.strokeArc(player.getX() - bladeRadius, player.getY() - bladeRadius,
+        g.strokeArc(strike.x() - bladeRadius, strike.y() - bladeRadius,
                 bladeRadius * 2, bladeRadius * 2, start, arc, ArcType.OPEN);
         g.setStroke(Color.rgb(245, 219, 255, 0.90 * fade));
         g.setLineWidth(2.0);
-        g.strokeArc(player.getX() - bladeRadius, player.getY() - bladeRadius,
+        g.strokeArc(strike.x() - bladeRadius, strike.y() - bladeRadius,
                 bladeRadius * 2, bladeRadius * 2, start, arc, ArcType.OPEN);
         g.restore();
     }
@@ -1148,16 +1148,21 @@ public final class GameRenderer {
             g.drawImage(dedicated, 0, 0, dedicated.getWidth(), dedicated.getHeight(), x, y, size, size);
             return;
         }
-        // 旧版资源分成两个三格图集：前三件是武器，后三件是饰品。
-        // 不能只按 iconIndex 取模后统一使用 weapons_v1，否则
-        // 「晨曦圣印 / 暮色斗篷 / 相位容器」会分别显示成武器图标（暮色斗篷
-        // 尤其会错误地显示为影牙短刃）。
-        boolean legacyWeapon = switch (item) {
-            case DAWN_WAND, SHADOW_FANG, RIFT_TWINBLADE -> true;
-            default -> false;
-        };
-        drawAtlasIcon(g, legacyWeapon ? WEAPON_ICONS : EQUIPMENT_ICONS,
-                item.iconIndex() % 3, x, y, size, Color.web("#f0c86e"));
+        // 显式对应已核对的图集格子；新装备缺图时不能取模冒充另一件装备。
+        switch (item) {
+            case DAWN_WAND -> drawAtlasIcon(g, WEAPON_ICONS, 0, x, y, size, LIGHT_GOLD);
+            case SHADOW_FANG -> drawAtlasIcon(g, WEAPON_ICONS, 1, x, y, size, SHADOW_VIOLET);
+            case RIFT_TWINBLADE -> drawAtlasIcon(g, WEAPON_ICONS, 2, x, y, size, LIGHT_GOLD);
+            case DAWN_SEAL -> drawAtlasIcon(g, EQUIPMENT_ICONS, 0, x, y, size, LIGHT_GOLD);
+            case DUSK_CLOAK -> drawAtlasIcon(g, EQUIPMENT_ICONS, 1, x, y, size, SHADOW_VIOLET);
+            case PHASE_VESSEL -> drawAtlasIcon(g, EQUIPMENT_ICONS, 2, x, y, size, LIGHT_GOLD);
+            default -> {
+                g.save();
+                g.setFill(LIGHT_GOLD);
+                g.fillText(item.displayName().substring(0, 1), x + size * 0.25, y + size * 0.75);
+                g.restore();
+            }
+        }
     }
 
     /** 旧图集回退：三格横排图集里取第 {@code cell} 格；图集缺失时画一个纯色方块兜底。 */

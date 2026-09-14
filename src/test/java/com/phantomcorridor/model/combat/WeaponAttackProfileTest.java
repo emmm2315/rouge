@@ -12,7 +12,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * 《新增 15 件装备与攻击特效设计》§四 的 8 件武器：每一件都必须**替换攻击方案**，
+ * 《新增 15 件装备与攻击特效设计》§四 的 8 件武器：每一件都必须释放自己的攻击方案，多件与同名武器同时出手，
  * 而不是换一个叠加属性。
  *
  * <p>这一组用例逐条对照设计文档里的数值：弹体数量与张角、每发系数、间隔倍率与绝对下限、
@@ -298,4 +298,90 @@ class WeaponAttackProfileTest {
 
         assertEquals(before, player.getSkillEnergy(), "普攻散射不消耗技能蓝条");
     }
+    @Test
+    void combinedLightWeaponsKeepIndependentPelletsDelaysAndMaximumCooldown() {
+        Player player = lightPlayer(EquipmentType.PRISM_FAN_WAND,
+                EquipmentType.SOLAR_BURST_STAFF, EquipmentType.ECLIPSE_RELAY);
+        PlayerAttackSystem attacks = new PlayerAttackSystem();
+        assertTrue(attacks.tryAttack(player, 200, 100));
+        assertEquals(3, attacks.getCurrentProfiles().size());
+        assertEquals(5, attacks.getProjectiles().size());
+        assertEquals(1, attacks.getPendingCount());
+        assertEquals(GameConfig.LIGHT_ATTACK_COOLDOWN * 1.45, attacks.getCooldownRemaining(), EPS);
+        assertFalse(attacks.tryAttack(player, 200, 100));
+        assertEquals(1, attacks.getWorldAttackCount());
+        player.setPosition(500, 500);
+        attacks.update(0.101);
+        assertEquals(6, attacks.getProjectiles().size());
+        Projectile delayed = attacks.getProjectiles().getLast();
+        assertEquals(0.55, delayed.getDamageCoefficient(), EPS);
+        assertEquals(100, delayed.getY(), EPS);
+        assertTrue(delayed.getX() < 200, "延迟弹体应保留原出手位置");
+        assertEquals(0, attacks.getPendingCount());
+    }
+
+    @Test
+    void mixedShadowWeaponsKeepProjectileImmediateAndDelayedWindows() {
+        Player player = shadowPlayer(EquipmentType.RETURNING_FANG,
+                EquipmentType.CRESCENT_REAPER, EquipmentType.NIGHTFALL_GREATSWORD);
+        PlayerAttackSystem attacks = new PlayerAttackSystem();
+        assertTrue(attacks.tryAttack(player, 200, 100));
+        assertEquals(1, attacks.getProjectiles().size());
+        assertEquals(Projectile.Behaviour.RETURN, attacks.getProjectiles().getFirst().getBehaviour());
+        assertEquals(1, attacks.getMeleeStrikes().size());
+        assertEquals(360, attacks.getMeleeStrikes().getFirst().arcDegrees(), EPS);
+        assertEquals(1, attacks.getPendingCount());
+        assertEquals(Math.max(0.50, GameConfig.SHADOW_ATTACK_COOLDOWN * 1.65),
+                attacks.getCooldownRemaining(), EPS);
+        player.setPosition(500, 500);
+        attacks.update(0.181);
+        assertEquals(1, attacks.getMeleeStrikes().size());
+        var delayed = attacks.getMeleeStrikes().getFirst();
+        assertEquals(40, delayed.arcDegrees(), EPS);
+        assertEquals(1.60, delayed.coefficient(), EPS);
+        assertEquals(100, delayed.x(), EPS);
+        assertEquals(100, delayed.y(), EPS);
+        assertEquals(0, delayed.angleRadians(), EPS);
+    }
+
+    @Test
+    void duplicateWeaponsStackPelletsAndDelayedAttacksWithoutMultiplyingCooldown() {
+        Player player = lightPlayer(EquipmentType.ECLIPSE_RELAY, EquipmentType.ECLIPSE_RELAY);
+        PlayerAttackSystem attacks = new PlayerAttackSystem();
+        assertTrue(attacks.tryAttack(player, 200, 100));
+        assertEquals(2, PlayerAttackSystem.activeWeapons(player).size());
+        assertEquals(2, attacks.getProjectiles().size());
+        assertEquals(2, attacks.getPendingCount());
+        assertEquals(Math.max(0.20, GameConfig.LIGHT_ATTACK_COOLDOWN * 1.20),
+                attacks.getCooldownRemaining(), EPS);
+        attacks.update(0.101);
+        assertEquals(4, attacks.getProjectiles().size());
+        assertTrue(attacks.getProjectiles().stream().allMatch(p -> p.getDamageCoefficient() == 0.55));
+        assertEquals(1, attacks.getWorldAttackCount());
+    }
+
+    @Test
+    void duplicateMeleeWindowsAndReslashesHaveIndependentHitRecords() {
+        Player player = shadowPlayer(EquipmentType.ECLIPSE_RELAY, EquipmentType.ECLIPSE_RELAY);
+        PlayerAttackSystem attacks = new PlayerAttackSystem();
+        attacks.tryAttack(player, 200, 100);
+        var initial = attacks.getMeleeStrikes();
+        assertEquals(2, initial.size());
+        assertNotEquals(initial.getFirst().attackId(), initial.getLast().attackId());
+        for (var strike : initial) assertTrue(attacks.registerMeleeHit(strike.attackId(), "enemy"));
+        for (var strike : initial) assertFalse(attacks.registerMeleeHit(strike.attackId(), "enemy"));
+        attacks.update(0.221);
+        assertEquals(2, attacks.getMeleeStrikes().size());
+        for (var strike : attacks.getMeleeStrikes()) {
+            assertEquals(0.45, strike.coefficient(), EPS);
+            assertTrue(attacks.registerMeleeHit(strike.attackId(), "enemy"));
+        }
+        attacks.clearTransientAttacks();
+        assertTrue(attacks.getMeleeStrikes().isEmpty());
+        assertEquals(0, attacks.getPendingCount());
+        attacks.reset();
+        assertEquals(0, attacks.getWorldAttackCount());
+        assertEquals(0, attacks.getMeleeReleaseCount());
+    }
+
 }

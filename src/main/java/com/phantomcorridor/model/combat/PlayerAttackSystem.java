@@ -23,7 +23,7 @@ import java.util.List;
  */
 public final class PlayerAttackSystem {
     /** 同一轮攻击中每一件影界武器对应的一次近战窗口。 */
-    public record MeleeStrike(double angleRadians, double arcDegrees, double range,
+    public record MeleeStrike(double x, double y, double angleRadians, double arcDegrees, double range,
                               double coefficient, int attackId, double visualTime) { }
 
     private final List<Projectile> projectiles = new ArrayList<>();
@@ -45,11 +45,14 @@ public final class PlayerAttackSystem {
     private final List<MeleeWindow> meleeWindows = new ArrayList<>();
 
     private static final class MeleeWindow {
-        final double angleRadians, arcDegrees, range, coefficient;
+        final double x, y, angleRadians, arcDegrees, range, coefficient;
+        final java.util.Set<Object> hitTargets = new java.util.HashSet<>();
         final int attackId;
         double remaining;
-        MeleeWindow(double angleRadians, double arcDegrees, double range,
+        MeleeWindow(double x, double y, double angleRadians, double arcDegrees, double range,
                     double coefficient, int attackId) {
+            this.x = x;
+            this.y = y;
             this.angleRadians = angleRadians;
             this.arcDegrees = arcDegrees;
             this.range = range;
@@ -108,6 +111,8 @@ public final class PlayerAttackSystem {
         meleeVisibleRemaining = 0.0;
         meleeAngleRadians = 0.0;
         meleeAttackId = 0;
+        worldAttackCount = 0;
+        meleeReleaseCount = 0;
         meleeArcDegrees = GameConfig.SHADOW_MELEE_ARC_DEGREES;
         meleeRange = GameConfig.SHADOW_MELEE_RANGE;
         meleeCoefficient = 1.0;
@@ -163,7 +168,7 @@ public final class PlayerAttackSystem {
         pending.removeAll(due);
         for (PendingAttack attack : due) {
             if (attack.kind == PendingKind.MELEE) {
-                openMelee(attack.profile, attack.directionX, attack.directionY);
+                openMelee(attack.profile, attack.originX, attack.originY, attack.directionX, attack.directionY);
             } else {
                 spawnPellets(attack.profile, attack.originX, attack.originY,
                         attack.directionX, attack.directionY, attack.pelletIndex, 1);
@@ -273,7 +278,7 @@ public final class PlayerAttackSystem {
         // 否则余震指环会被空按刷出来。
         worldAttackCount++;
         meleeAngleRadians = Math.atan2(unitY, unitX);
-        if (profile.world() == WorldType.SHADOW && !profile.hasWindup()) {
+        if (profiles.stream().anyMatch(p -> p.world() == WorldType.SHADOW && !p.hasWindup())) {
             // 夜行披风：影界攻击「实际释放」时给短时加速。重剑有前摇，所以延迟到
             // openMelee 那一刻才触发（见 advancePending），前摇本身不给加速。
             player.onShadowAttackReleased();
@@ -291,11 +296,11 @@ public final class PlayerAttackSystem {
                     schedule(PendingKind.MELEE, selected.windup(), selected,
                             player.getX(), player.getY(), unitX, unitY, 0);
                 } else {
-                    openMelee(selected, unitX, unitY);
+                    openMelee(selected, player.getX(), player.getY(), unitX, unitY);
                 }
                 // 蚀界仪在影界：先斩 0.75，再在 0.22 秒后原方向复斩 0.45。
                 if (selected.pelletInterval() > 0.0) {
-                    schedule(PendingKind.MELEE, 0.22, AttackProfile.eclipseRelayReslash(),
+                    schedule(PendingKind.MELEE, selected.pelletInterval(), AttackProfile.eclipseRelayReslash(),
                             player.getX(), player.getY(), unitX, unitY, 1);
                 }
             }
@@ -441,7 +446,7 @@ public final class PlayerAttackSystem {
      * <p>这也是「影界攻击实际释放」的时刻——夜行披风的加速在这里触发，
      * 所以重剑的 0.18 秒前摇期间不会提前给到加速（设计文档 §五-10）。
      */
-    private void openMelee(AttackProfile profile, double unitX, double unitY) {
+    private void openMelee(AttackProfile profile, double x, double y, double unitX, double unitY) {
         meleeVisibleRemaining = GameConfig.SHADOW_MELEE_VISIBLE_TIME;
         meleeAngleRadians = Math.atan2(unitY, unitX);
         meleeArcDegrees = profile.meleeArcDegrees();
@@ -451,7 +456,7 @@ public final class PlayerAttackSystem {
         meleeCoefficient = profile.coefficient(0);
         meleeAttackId++;
         meleeReleaseCount++;
-        meleeWindows.add(new MeleeWindow(meleeAngleRadians, meleeArcDegrees, meleeRange,
+        meleeWindows.add(new MeleeWindow(x, y, meleeAngleRadians, meleeArcDegrees, meleeRange,
                 meleeCoefficient, meleeAttackId));
     }
 
@@ -492,11 +497,19 @@ public final class PlayerAttackSystem {
     public List<MeleeStrike> getMeleeStrikes() {
         List<MeleeStrike> result = new ArrayList<>(meleeWindows.size());
         for (MeleeWindow window : meleeWindows) {
-            result.add(new MeleeStrike(window.angleRadians, window.arcDegrees, window.range,
+            result.add(new MeleeStrike(window.x, window.y, window.angleRadians, window.arcDegrees, window.range,
                     window.coefficient, window.attackId,
                     GameConfig.SHADOW_MELEE_VISIBLE_TIME - window.remaining));
         }
         return Collections.unmodifiableList(result);
     }
     public double getCooldownRemaining() { return cooldownRemaining; }
+
+    /** 命中记录随窗口释放；多个同时存在的窗口不能覆盖彼此的记录。 */
+    public boolean registerMeleeHit(int attackId, Object target) {
+        for (MeleeWindow window : meleeWindows) {
+            if (window.attackId == attackId) return window.hitTargets.add(target);
+        }
+        return false;
+    }
 }

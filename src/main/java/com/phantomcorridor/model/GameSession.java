@@ -204,12 +204,9 @@ public final class GameSession {
             interactRequested = false;
             interact(current);
         }
-        player.restorePhaseEnergy(GameConfig.PHASE_ENERGY_REGEN_PER_SEC * dt);
+        player.restorePhaseEnergy(phaseEnergyRegenRate() * dt);
         player.updateSkillEnergy(dt);
         if (attacking && !abilities.isCasting()) {
-        player.restorePhaseEnergy(phaseEnergyRegenRate() * dt);
-        player.updateAttackCharges(dt);
-        if (attacking) {
             attackSystem.tryAttack(player, aimX, aimY);
         }
         // Animation follows actual movement and successful attack events, not held input.
