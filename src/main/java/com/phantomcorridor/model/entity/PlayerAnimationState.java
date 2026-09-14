@@ -7,6 +7,8 @@ public enum PlayerAnimationState {
     /** 闪避冲刺：冲刺期间无视方向输入，只播放冲刺动作并留下拖尾。 */
     DASHING,
     ATTACKING,
+    HIT,
+    INVULNERABLE,
     SHIFTING,
     DOWN
 }

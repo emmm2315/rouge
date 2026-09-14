@@ -201,8 +201,15 @@ public final class RoomNavigationSystem {
     }
 
     private void transition(Player player, Direction direction) {
-        if (!currentRoom.isDoorOpen(direction)) return;
-        currentRoom = map.room(currentRoom.neighbor(direction));
+        if (currentRoom.hasHiddenExit(direction)) {
+            Room target = map.room(currentRoom.hiddenExitTargetId());
+            if (target.requiredEntryForm() != null
+                    && target.requiredEntryForm() != player.getCurrentWorld()) return;
+            currentRoom = target;
+        } else {
+            if (!currentRoom.isDoorOpen(direction)) return;
+            currentRoom = map.room(currentRoom.neighbor(direction));
+        }
         currentRoom.visit();
         discoverNeighbors(currentRoom);
         roomChanged = true;
@@ -221,7 +228,9 @@ public final class RoomNavigationSystem {
 
     private void discoverNeighbors(Room room) {
         room.discover();
-        for (int roomId : room.neighbors().values()) map.room(roomId).discover();
+        for (var entry : room.neighbors().entrySet()) {
+            if (!room.hasHiddenExit(entry.getKey())) map.room(entry.getValue()).discover();
+        }
     }
 
     private static double centerX(Room room) { return (room.minX() + room.maxX()) / 2.0; }

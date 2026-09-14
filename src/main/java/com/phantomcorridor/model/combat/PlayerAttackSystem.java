@@ -198,7 +198,7 @@ public final class PlayerAttackSystem {
     }
 
     public boolean tryAttack(Player player, double targetX, double targetY) {
-        if (cooldownRemaining > 0.0) {
+        if (player.getHp() <= 0 || player.isDashing() || cooldownRemaining > 0.0) {
             return false;
         }
         double[] aim = aimDirection(player, targetX, targetY);
@@ -219,6 +219,7 @@ public final class PlayerAttackSystem {
         currentProfile = profile;
 
         if (!player.consumeAttackCharge()) return false;
+        player.startAttackAnimation(unitX, unitY, profile.windup());
         // 计数只在**真的启动了一轮攻击**之后才推进：蓝条不够、没有可用方案时不算一轮，
         // 否则余震指环会被空按刷出来。
         worldAttackCount++;
@@ -422,6 +423,7 @@ public final class PlayerAttackSystem {
     public int getPendingCount() { return pending.size(); }
 
     public boolean isMeleeVisible() { return meleeVisibleRemaining > 0.0; }
+    public double getMeleeVisualTime() { return GameConfig.SHADOW_MELEE_VISIBLE_TIME - meleeVisibleRemaining; }
     public double getMeleeAngleRadians() { return meleeAngleRadians; }
     public int getMeleeAttackId() { return meleeAttackId; }
     public double getCooldownRemaining() { return cooldownRemaining; }

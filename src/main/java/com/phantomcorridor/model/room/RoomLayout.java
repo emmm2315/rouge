@@ -40,7 +40,7 @@ public record RoomLayout(RoomShape shape, List<RoomArea> areas, List<Wall> walls
         RoomShape shape = chooseShape(type, random);
         List<RoomArea> areas = createAreas(type, shape, random);
         int obstacleCount = switch (type) {
-            case REWARD, SHOP -> 0;
+            case REWARD, SHOP, HIDDEN -> 0;
             case EVENT -> 3 + random.nextInt(3);
             case BOSS -> 3 + random.nextInt(3);
             default -> 6 + random.nextInt(4);

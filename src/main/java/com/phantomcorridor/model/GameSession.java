@@ -60,6 +60,7 @@ public final class GameSession {
         worldShift.reset();
         runSeed = MapGenerator.parseSeed(configuredSeed);
         this.difficulty = difficulty == null ? Difficulty.NORMAL : difficulty;
+        player.setDifficulty(this.difficulty);
         floor = 1;
         runCleared = false;
         dashRequested = false;
@@ -120,6 +121,8 @@ public final class GameSession {
         }
         aimX = targetX;
         aimY = targetY;
+        double movementStartX = player.getX();
+        double movementStartY = player.getY();
         // 冲刺优先于普通移动：冲刺期间忽略方向输入，位移完全由冲刺方向决定。
         if (dashRequested) {
             dashRequested = false;
@@ -133,6 +136,8 @@ public final class GameSession {
         } else {
             navigation.move(player, movementX, movementY, dt);
         }
+        double actualMovementX = player.getX() - movementStartX;
+        double actualMovementY = player.getY() - movementStartY;
         player.updateDash(dt);
         if (navigation.consumeRoomChanged()) {
             attackSystem.clearTransientAttacks();
@@ -183,7 +188,8 @@ public final class GameSession {
         if (attacking) {
             attackSystem.tryAttack(player, aimX, aimY);
         }
-        player.updateAnimation(dt, movementX, movementY, attacking,
+        // Animation follows actual movement and successful attack events, not held input.
+        player.updateAnimation(dt, actualMovementX, actualMovementY,
                 phasePulseVisibleRemaining > 0.0);
     }
 
@@ -229,6 +235,7 @@ public final class GameSession {
     public EnemyProjectileSystem getEnemyProjectiles() { return enemyProjectiles; }
     public EnemySystem getEnemies() { return enemies; }
     public boolean isPhasePulseVisible() { return phasePulseVisibleRemaining > 0.0; }
+    public double getPhasePulseVisualTime() { return GameConfig.PHASE_PULSE_VISIBLE_TIME - phasePulseVisibleRemaining; }
     public double getAimX() { return aimX; }
     public double getAimY() { return aimY; }
     public int getLightEnemyCount() { return enemies.getCount(WorldType.LIGHT); }
@@ -425,6 +432,7 @@ public final class GameSession {
             case REWARD -> "奖励房";
             case SHOP -> "商店房";
             case EVENT -> "事件房";
+            case HIDDEN -> "隐藏房";
             case BOSS -> "Boss 房";
         };
     }

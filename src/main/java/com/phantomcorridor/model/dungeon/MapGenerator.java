@@ -2,6 +2,7 @@ package com.phantomcorridor.model.dungeon;
 
 import com.phantomcorridor.config.RoomConfig;
 import com.phantomcorridor.model.RoomType;
+import com.phantomcorridor.model.WorldType;
 import com.phantomcorridor.model.room.Direction;
 import com.phantomcorridor.model.room.Room;
 import com.phantomcorridor.util.RandomUtil;
@@ -26,21 +27,32 @@ public final class MapGenerator {
         Set<String> occupied = new HashSet<>();
         occupied.add("0,0");
         for (int id = 1; id < RoomConfig.DEFAULT_ROOM_COUNT; id++) {
+            boolean hidden = id == RoomConfig.DEFAULT_ROOM_COUNT - 2;
             Room preferred = id == RoomConfig.DEFAULT_ROOM_COUNT - 1
-                    ? rooms.stream().filter(room -> room.id() > 0 && hasFreeDirection(room, occupied))
+                    ? rooms.stream().filter(room -> room.id() > 0 && !room.isHiddenRoute()
+                            && hasFreeDirection(room, occupied))
                     .findFirst().orElseThrow()
                     : id <= 5 ? rooms.get(id - 1) : rooms.get(RandomUtil.nextInt(random, 1, id - 2));
+            if (hidden && preferred.isHiddenRoute()) {
+                preferred = rooms.stream().filter(room -> room.id() > 0 && !room.isHiddenRoute()
+                        && hasFreeDirection(room, occupied)).findFirst().orElseThrow();
+            }
             Room parent = hasFreeDirection(preferred, occupied) ? preferred : rooms.stream()
-                    .filter(room -> hasFreeDirection(room, occupied)).findFirst().orElseThrow();
+                    .filter(room -> !room.isHiddenRoute() && hasFreeDirection(room, occupied))
+                    .findFirst().orElseThrow();
             Direction direction = findFreeDirection(random, parent, occupied);
             int x = parent.mapX() + direction.dx();
             int y = parent.mapY() + direction.dy();
             int depth = depths.getOrDefault(parent.id(), 0) + 1;
             RoomType type = id == RoomConfig.DEFAULT_ROOM_COUNT - 1 ? RoomType.BOSS
-                    : rollType(random, depth);
+                    : hidden ? RoomType.HIDDEN : rollType(random, depth);
             Room room = new Room(id, type, x, y, random.nextLong());
             parent.connect(direction, id);
             room.connect(direction.opposite(), parent.id());
+            if (hidden) {
+                parent.setHiddenExit(direction, id);
+                room.configureHiddenRoute(WorldType.SHADOW, direction.opposite());
+            }
             rooms.add(room);
             depths.put(id, depth);
             occupied.add(x + "," + y);

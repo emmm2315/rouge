@@ -239,8 +239,8 @@ class MonsterExpansionTest {
                     kind + " 的生命值应当随层数提高");
             assertTrue(lastFloor.getDefense() > firstFloor.getDefense(),
                     kind + " 的防御应当随层数提高");
-            assertEquals(firstFloor.getMaxHp() * 2, hard.getMaxHp(),
-                    kind + " 在屌炸天下生命值应当是标准的两倍");
+            assertEquals(Math.round(firstFloor.getMaxHp() * 1.4), hard.getMaxHp(),
+                    kind + " 在屌炸天下 Boss 血量应为标准的 1.4 倍（原两倍降低 30%）");
         }
     }
 

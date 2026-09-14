@@ -19,6 +19,7 @@ public final class RoomLoot {
     private boolean chestOpened;
     private boolean chestRewardGranted;
     private boolean eventPending;
+    private boolean hiddenRewardGranted;
 
     /** 是否已经按种子生成过本房内容（生成一次即固定，不再随进出重刷）。 */
     public boolean isRolled() { return rolled; }
@@ -46,6 +47,9 @@ public final class RoomLoot {
     public boolean isEventPending() { return eventPending; }
 
     public void setEventPending(boolean pending) { this.eventPending = pending; }
+
+    public boolean isHiddenRewardGranted() { return hiddenRewardGranted; }
+    public void grantHiddenReward() { hiddenRewardGranted = true; }
 
     /** 房间是否还有玩家没拿走的东西（供小地图提示）。 */
     public boolean hasContent() { return !pickups.isEmpty() || eventPending; }

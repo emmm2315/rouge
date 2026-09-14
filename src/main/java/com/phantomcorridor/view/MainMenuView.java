@@ -220,19 +220,19 @@ public class MainMenuView extends StackPane implements SceneLifecycle {
     /**
      * 构建难度选择覆盖层：点击「开始游戏」后先选难度再进游戏。
      *
-     * <p>难度只改敌人的生命与防御基础值，与层数成长叠加；选好后走与原来相同的开始过渡。
+     * <p>难度分别控制敌伤、Boss 耐久、波次数量和装备收益；选好后开始新局。
      */
     private VBox createDifficultyContent(Settings settings, Runnable onStart) {
         Label heading = new Label("选择难度");
         heading.getStyleClass().add("overlay-title");
 
-        Label hint = new Label("难度只影响敌人的生命与防御基础值（与层数成长叠加），玩家的生命、金币与装备不变。");
+        Label hint = new Label("高难度增加精英压力，也提高装备收益；困难与屌炸天的 Boss 耐久已下调。");
         hint.getStyleClass().add("hint-text");
 
         VBox options = new VBox(14.0);
         options.setAlignment(Pos.CENTER);
         for (Difficulty difficulty : Difficulty.values()) {
-            Button option = createMenuButton(difficulty.displayName() + "　" + difficulty.percentText(),
+            Button option = createMenuButton(difficulty.displayName(),
                     () -> chooseDifficulty(settings, difficulty, onStart));
             if (difficulty == settings.getDifficulty()) {
                 option.getStyleClass().add("menu-button-current");
