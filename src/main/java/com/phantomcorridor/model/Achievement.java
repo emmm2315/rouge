@@ -4,6 +4,7 @@ package com.phantomcorridor.model;
 public enum Achievement {
     BOSS_SLAYER("首领终结者", "首次击败任意首领", "boss_slayer"),
     ALL_BOSSES("诸界征服者", "击败图鉴中的全部六名首领", "all_bosses"),
+    ALL_EQUIPMENT("万物皆藏", "发现道具图鉴中的全部装备", "all_equipment"),
     EASY_CLEAR("小试身手", "通关简单难度", "easy_clear"),
     NORMAL_CLEAR("通关了？", "通关标准难度", "normal_clear"),
     HARD_CLEAR("无惧者", "通关困难难度", "hard_clear"),

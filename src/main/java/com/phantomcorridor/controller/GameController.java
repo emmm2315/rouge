@@ -81,6 +81,9 @@ public final class GameController {
 
     private void updateProgress() {
         session.getCollectedEquipment().forEach(progress::discover);
+        if (progress.hasDiscoveredEveryEquipment() && progress.unlock(Achievement.ALL_EQUIPMENT)) {
+            view.showAchievementUnlocked(Achievement.ALL_EQUIPMENT);
+        }
         session.getDefeatedBossKinds().forEach(progress::recordBossDefeat);
         if (session.hasDefeatedBoss() && progress.unlock(Achievement.BOSS_SLAYER)) {
             view.showAchievementUnlocked(Achievement.BOSS_SLAYER);

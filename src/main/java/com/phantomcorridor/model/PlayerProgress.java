@@ -83,6 +83,10 @@ public final class PlayerProgress {
         return EnumSet.allOf(EnemyKind.class).stream().filter(EnemyKind::boss).allMatch(defeatedBosses::contains);
     }
 
+    public boolean hasDiscoveredEveryEquipment() {
+        return discoveredEquipment.containsAll(EnumSet.allOf(EquipmentType.class));
+    }
+
     private void loadFrom(Preferences preferences) {
         load(preferences.get(EQUIPMENT_KEY, ""), EquipmentType.class, discoveredEquipment);
         load(preferences.get(ACHIEVEMENTS_KEY, ""), Achievement.class, achievements);

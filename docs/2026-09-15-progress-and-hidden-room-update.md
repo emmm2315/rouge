@@ -24,6 +24,7 @@
 | --- | --- | --- |
 | 首领终结者 | 首次击败任意首领 | `achievements/boss_slayer.png` |
 | 诸界征服者 | 击败六名 Boss | `achievements/all_bosses.png` |
+| 万物皆藏 | 同一昵称累计发现全部 21 件装备 | `achievements/all_equipment.png` |
 | 小试身手 | 通关简单难度 | `achievements/easy_clear.png` |
 | 通关了？ | 通关标准难度 | `achievements/normal_clear.png` |
 | 无惧者 | 通关困难难度 | `achievements/hard_clear.png` |
@@ -32,6 +33,10 @@
 成就页面对未解锁项目只显示通用占位；解锁后才显示图标、名称和说明。游戏中第一次满足条件时，右上角以小型提示条显示对应图标和文案，停留约三秒后自动淡出；同一局连续解锁会按顺序显示。
 
 ## 验证
+
+全图鉴成就支持跨局累计，重复拾取同一种装备不重复计数；仅在首次解锁时提示。已有完整图鉴的档案进入游戏后会补发该成就。成就页沿用未解锁隐藏详情的规则，当前共有七项成就。
+
+新增 `EquipmentCompletionTest` 检查缺一件时不达标、重复拾取不计数、集齐后达标、解锁去重以及图标资源存在。
 
 在功能基线上执行：
 
