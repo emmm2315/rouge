@@ -138,6 +138,29 @@ class EnemySystemTest {
     }
 
     @Test
+    void shadowMeleeHitsAnEnemyWhoseRaisedHurtboxOverlapsTheWall() {
+        // 敌人的脚点仍在墙外，但普通怪受击框会向上偏移 51px，因而落入横墙。
+        // 影斩应按脚点确认没有隔墙，再按受击框结算扇形命中。
+        Room room = new Room(12, RoomType.BATTLE, 0, 0, RoomShape.RECTANGLE,
+                List.of(new RoomArea(0, 0, AppConfig.VIEW_WIDTH, AppConfig.VIEW_HEIGHT)),
+                List.of(new Wall(0, 300, AppConfig.VIEW_WIDTH, 30, WorldType.SHADOW)));
+        RoomNavigationSystem navigation = navigationFor(room);
+        Player player = new Player(600, 485);
+        player.toggleWorld();
+        EnemySystem system = new EnemySystem();
+        Enemy enemy = system.spawnForTest(EnemyKind.LANTERN, WorldType.LIGHT, 1, Difficulty.NORMAL);
+        enemy.setPosition(600, 360);
+        int before = enemy.getHp();
+
+        PlayerAttackSystem attacks = new PlayerAttackSystem();
+        assertTrue(attacks.tryAttack(player, enemy.getHitboxCenterX(), enemy.getHitboxCenterY()));
+        system.update(0.0, player, attacks, navigation);
+
+        assertTrue(enemy.getHp() < before,
+                "敌人脚点与玩家同侧时，影斩不应因上移的受击框碰到墙而失效");
+    }
+
+    @Test
     void enemyPursuesRegardlessOfPlayerForm() {
         Room room = openRoom(3, RoomType.BATTLE);
         RoomNavigationSystem navigation = navigationFor(room);

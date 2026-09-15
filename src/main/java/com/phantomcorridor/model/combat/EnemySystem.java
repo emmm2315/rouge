@@ -1151,8 +1151,11 @@ public final class EnemySystem {
             for (PlayerAttackSystem.MeleeStrike strike : playerAttacks.getMeleeStrikes()) {
                 for (Enemy enemy : enemies) {
                     if (enemy.isDead()) continue;
-                    if (!hasLineOfSight(strike.x(), strike.y(), enemy.getHitboxCenterX(),
-                            enemy.getHitboxCenterY(), WorldType.SHADOW)) continue;
+                    // 敌人移动/贴墙使用的是脚点，而受击框在脚点上方。贴着横向墙时胸腹
+                    // 受击框可以与墙相交；若拿它做视线终点，会把同侧贴脸影斩误判成隔墙。
+                    // 墙体可达性应以真实站位（脚点）为准，扇形与距离仍以受击框为准。
+                    if (!hasLineOfSight(strike.x(), strike.y(), enemy.getX(), enemy.getY(),
+                            WorldType.SHADOW)) continue;
                     if (!meleeCovers(player, strike, enemy)) continue;
                     if (!playerAttacks.registerMeleeHit(strike.attackId(), enemy)) continue;
                     int dealt = applyDamage(player, enemy, strike.coefficient(),
