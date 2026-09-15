@@ -72,11 +72,12 @@ public class App extends Application {
         // 玩家档案与偏好设置分离，恢复默认设置不会再清空玩家身份。
         Settings settings = new Settings();
         audio = new AudioManager(settings);
-        PlayerProfile profile = PlayerProfile.loadLocal();
-        PlayerProgress progress = PlayerProgress.loadLocal();
+        // 登录框始终留空，提交昵称后再选择对应档案与进度。
+        PlayerProfile profile = new PlayerProfile();
+        PlayerProgress progress = new PlayerProgress();
         sceneManager = new SceneManager(root);
 
-        LoginController loginController = new LoginController(profile, this::showMainMenu);
+        LoginController loginController = new LoginController(profile, progress, this::showMainMenu);
         MainMenuController mainMenuController = new MainMenuController(
                 this::showGame, stage::close, settings, profile, progress);
         loginView = loginController.getView();
