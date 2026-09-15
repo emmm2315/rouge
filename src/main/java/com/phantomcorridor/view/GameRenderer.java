@@ -216,6 +216,8 @@ public final class GameRenderer {
         // 拖尾垫在角色之下：残影只该在身后露出来，不能糊在自己脸上。
         drawDashTrail(g, player, light);
         drawPlayer(g, player, light);
+        // 蓄力进度环贴在角色身上：玩家松开右键的时机要看它，不能塞进角落的 HUD。
+        drawChargeIndicator(g, session);
         drawPlayerAbilities(g, session);
         // 攻击层在角色之后绘制，避免角色把斩击和投射物遮住。
         drawAttacks(g, session, light);
@@ -228,6 +230,8 @@ public final class GameRenderer {
         drawEquipmentSelection(g, session);
         // 伤害飘字画在所有面板之上：挨打的即时反馈不该被 HUD 盖住。
         drawDamageFlashes(g, session);
+        // 格挡的紫色边框与「格挡」提示压在最上层（结算覆盖层之下）：它们是全屏状态提示。
+        drawBlockFeedback(g, session);
         if (player.getHp() <= 0) drawDeathOverlay(g, session);
         else if (session.isRunCleared()) drawVictoryOverlay(g, session);
     }
@@ -244,10 +248,16 @@ public final class GameRenderer {
         double y = (room.minY() + room.maxY()) / 2.0;
         PortalRenderer.draw(g, x, y, session.getVisualTime(), session.getFloor(), session.getTotalFloors());
     }
-    /** 形态限定隐藏出口：用金色菱形提示位置，跨门时才由导航检查形态。 */
+    /**
+     * 形态限定隐藏出口：用菱形提示位置，颜色标出"这一扇需要哪种形态"（光金 / 影紫）。
+     *
+     * <p>颜色必须先于碰撞给出来：玩家站在门口就该看出要不要切界，而不是撞上去被拒绝才发现。
+     * 真正的形态检查在 {@code RoomNavigationSystem.transition} 里做，渲染层只读配置。
+     */
     private void drawHiddenExit(GraphicsContext g, GameSession session) {
         Room room = session.getNavigation().getCurrentRoom();
         if (!room.hasHiddenExit()) return;
+        if (requiredFormOf(session, room) != session.getPlayer().getCurrentWorld()) return;
         Direction direction = room.hiddenExitDirection();
         double x = room.doorCenter(direction);
         double y = switch (direction) {
@@ -257,13 +267,32 @@ public final class GameRenderer {
         };
         if (direction == Direction.WEST) x = room.minX() + 8;
         if (direction == Direction.EAST) x = room.maxX() - 8;
-        g.setFill(Color.color(1.0, 0.83, 0.35, 0.82));
+        Color marker = hiddenRouteColor(requiredFormOf(session, room));
+        g.setFill(Color.color(marker.getRed(), marker.getGreen(), marker.getBlue(), 0.82));
         g.setStroke(Color.color(0.35, 0.18, 0.55, 0.95));
         g.setLineWidth(2.0);
         g.fillPolygon(new double[]{x, x + 13, x, x - 13},
                 new double[]{y - 13, y, y + 13, y}, 4);
         g.strokePolygon(new double[]{x, x + 13, x, x - 13},
                 new double[]{y - 13, y, y + 13, y}, 4);
+    }
+
+    /**
+     * 隐藏路线需要的形态。
+     *
+     * <p>要求形态挂在**隐藏房自己**身上（见 {@code Room.configureHiddenRoute}），
+     * 所以要从出口指向的目标房间去读，而不是读当前房间。
+     */
+    private static WorldType requiredFormOf(GameSession session, Room room) {
+        WorldType required = session.getNavigation().getMap()
+                .room(room.hiddenExitTargetId()).requiredEntryForm();
+        // 兜底按光界处理：正式地图一定配了形态，这里只是让渲染层不必到处判空。
+        return required == null ? WorldType.LIGHT : required;
+    }
+
+    /** 隐藏路线的主题色：光金 / 影紫，与两界的配色保持一致。 */
+    private static Color hiddenRouteColor(WorldType requiredForm) {
+        return requiredForm == WorldType.SHADOW ? SHADOW_VIOLET : LIGHT_GOLD;
     }
 
     private void drawPhasePulse(GraphicsContext g, GameSession session, boolean light) {
@@ -385,6 +414,7 @@ public final class GameRenderer {
             }
             drawEnemyHealth(g, enemy, enemy.getWorld() == WorldType.LIGHT ? LIGHT_GOLD : SHADOW_VIOLET);
             g.restore();
+            if (enemy.isAttackWarning()) drawAttackWarning(g, enemy);
             g.setFill(Color.WHITE);
             g.setFont(Font.font("Microsoft YaHei UI", 11));
             g.fillText(enemy.isSpawning() ? "现身中" : enemy.getKind().affinity().label(), enemy.getX() - 24, enemy.getHitboxCenterY() - 50);
@@ -427,6 +457,121 @@ public final class GameRenderer {
         g.fillRect(x, y, width, 6);
         g.setFill(Color.color(domain.getRed(), domain.getGreen(), domain.getBlue(), 0.92));
         g.fillRect(x + 1, y + 1, (width - 2) * enemy.getHp() / enemy.getMaxHp(), 4);
+    }
+
+    /**
+     * 敌人头顶的红色感叹号：出招前 0.5 秒的可反应窗口。
+     *
+     * <p>画在血条上方、"红底白叹号"的高对比配色，保证在满屏弹幕里也能一眼扫到；
+     * 是否显示完全由模型给出（{@link Enemy#isAttackWarning()}），渲染层不自己做计时，
+     * 否则暂停时符号会继续闪、和冻结的游戏状态对不上。
+     */
+    private void drawAttackWarning(GraphicsContext g, Enemy enemy) {
+        double x = enemy.getX();
+        double y = enemy.getY() - enemy.getKind().overheadHeight() - 34.0;
+        // 轻微呼吸让它在静止画面里也能被注意到，但不至于晃到看不清。
+        double pulse = 1.0 + 0.12 * Math.sin(enemy.getAnimationTime() * 18.0);
+        g.save();
+        g.setFill(Color.rgb(0, 0, 0, 0.55));
+        g.fillOval(x - 13 * pulse, y - 13 * pulse, 26 * pulse, 26 * pulse);
+        g.setFill(Color.web("#ff3b30"));
+        g.fillOval(x - 11 * pulse, y - 11 * pulse, 22 * pulse, 22 * pulse);
+        g.setFill(Color.WHITE);
+        g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 17));
+        g.setTextAlign(TextAlignment.CENTER);
+        g.fillText("!", x, y + 6 * pulse);
+        g.setTextAlign(TextAlignment.LEFT);
+        g.restore();
+    }
+
+    /**
+     * 光形态蓄力的进度环（画在角色脚下）。
+     *
+     * <p>以角色为圆心、从 12 点方向顺时针填充：这是玩家判断"什么时候松手"的唯一依据，
+     * 所以它必须跟着角色走，而不是缩在 HUD 的某个角落。蓄满时整圈收拢并加一层外发光，
+     * 对应"再按一下就满伤"。
+     */
+    private void drawChargeIndicator(GraphicsContext g, GameSession session) {
+        Player player = session.getPlayer();
+        if (!player.isCharging()) return;
+        double ratio = player.getChargeRatio();
+        double radius = GameConfig.PLAYER_RADIUS + 18.0;
+        double centerX = player.getX();
+        double centerY = player.getY() - 12.0;
+        g.save();
+        g.setLineWidth(5.0);
+        g.setStroke(Color.rgb(255, 226, 140, 0.32));
+        g.strokeOval(centerX - radius, centerY - radius, radius * 2, radius * 2);
+        g.setStroke(ratio >= 1.0 ? Color.web("#fff3b0") : Color.web("#ffd166"));
+        g.strokeArc(centerX - radius, centerY - radius, radius * 2, radius * 2,
+                90, -360 * ratio, ArcType.OPEN);
+        if (ratio >= 1.0) {
+            g.setLineWidth(11.0);
+            g.setStroke(Color.rgb(255, 240, 170, 0.28));
+            g.strokeOval(centerX - radius - 5, centerY - radius - 5,
+                    (radius + 5) * 2, (radius + 5) * 2);
+        }
+        g.restore();
+    }
+
+    /**
+     * 影形态格挡成功的紫色边框，以及挡下攻击处的「格挡」提示。
+     *
+     * <p>边框只在**格挡成功**（已经挡下至少一次攻击、强化还攒着）时亮起，用主题紫
+     * （与影界同一色系）提示"那一下强化还没打出去"，打完就熄。用渐变而不是实线，
+     * 是为了不挡住屏幕边缘的弹幕、房间边界与 HUD。
+     */
+    private void drawBlockFeedback(GraphicsContext g, GameSession session) {
+        Player player = session.getPlayer();
+        if (player.hasBlockEmpower()) {
+            double pulse = 0.52 + 0.16 * Math.sin(session.getVisualTime() * 6.0);
+            double width = AppConfig.VIEW_WIDTH;
+            double height = AppConfig.VIEW_HEIGHT;
+            double thickness = 96.0;
+            Color edge = Color.color(SHADOW_VIOLET.getRed(), SHADOW_VIOLET.getGreen(),
+                    SHADOW_VIOLET.getBlue(), pulse);
+            Color clear = Color.color(SHADOW_VIOLET.getRed(), SHADOW_VIOLET.getGreen(),
+                    SHADOW_VIOLET.getBlue(), 0.0);
+            g.setFill(new LinearGradient(0, 0, 0, thickness, false, CycleMethod.NO_CYCLE,
+                    new Stop(0, edge), new Stop(1, clear)));
+            g.fillRect(0, 0, width, thickness);
+            g.setFill(new LinearGradient(0, height, 0, height - thickness, false, CycleMethod.NO_CYCLE,
+                    new Stop(0, edge), new Stop(1, clear)));
+            g.fillRect(0, height - thickness, width, thickness);
+            g.setFill(new LinearGradient(0, 0, thickness, 0, false, CycleMethod.NO_CYCLE,
+                    new Stop(0, edge), new Stop(1, clear)));
+            g.fillRect(0, 0, thickness, height);
+            g.setFill(new LinearGradient(width, 0, width - thickness, 0, false, CycleMethod.NO_CYCLE,
+                    new Stop(0, edge), new Stop(1, clear)));
+            g.fillRect(width - thickness, 0, thickness, height);
+        }
+        // 提示独立于边框：只要挡下过攻击就亮，与强化是否已经被兑现无关。
+        drawBlockFlash(g, player);
+    }
+
+    /**
+     * 挡下攻击时在受击处冒出的黄色「格挡」小字。
+     *
+     * <p>位置由模型在受击当帧锁定（{@link Player#getBlockFlashX()}），所以人物走开后字留在原地，
+     * 读起来才是"这一下被打在这里"，而不是跟着人飘。每次挡下都会重新点燃并向上飘散淡出。
+     */
+    private void drawBlockFlash(GraphicsContext g, Player player) {
+        double ratio = player.getBlockFlashRatio();
+        if (ratio <= 0.0) return;
+        double alpha = Math.min(1.0, ratio * 1.6);
+        double rise = (1.0 - ratio) * 18.0;
+        double x = player.getBlockFlashX();
+        double y = player.getBlockFlashY() - rise;
+        g.save();
+        g.setTextAlign(TextAlignment.CENTER);
+        g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 17));
+        // 先描一层暗色，保证在亮色地面与弹幕上都读得出这两个字。
+        g.setFill(Color.rgb(0, 0, 0, 0.65 * alpha));
+        g.fillText("格挡", x + 1.5, y + 1.5);
+        g.setFill(Color.color(1.0, 0.84, 0.30, alpha));
+        g.fillText("格挡", x, y);
+        g.setTextAlign(TextAlignment.LEFT);
+        g.restore();
     }
 
     /**
@@ -992,12 +1137,16 @@ public final class GameRenderer {
         g.fillText("第 " + session.getFloor() + " 层探索结束", centerX, centerY - 70);
         g.setFont(Font.font("Microsoft YaHei UI", 15));
         g.setFill(Color.web("#e0cfea"));
-        g.fillText("击杀 " + session.getTotalKills() + "    用时 " + formatDuration(session.getVisualTime()),
+        g.fillText("击杀 " + session.getTotalKills() + "    用时 " + formatDuration(session.getRunTime()),
                 centerX, centerY - 38);
         g.fillText("金币 " + session.getCoins() + "    装备 " + session.getPlayer().getEquipment().size() + "/3",
                 centerX, centerY - 12);
-        drawDeathButton(g, session, centerX - 170, centerY + 44, 140, 50, "重新开始", false);
-        drawDeathButton(g, session, centerX + 30, centerY + 44, 140, 50, "返回主菜单", true);
+        drawSettlementButton(g, session, SettlementButtons.RESTART, "重新开始", false);
+        drawSettlementButton(g, session, SettlementButtons.MAIN_MENU, "返回主菜单", true);
+        // 与通关界面一致：按钮和快捷键都能用，这里把快捷键也写出来。
+        g.setFont(Font.font("Microsoft YaHei UI", 15));
+        g.setFill(Color.web("#c9b4ca"));
+        g.fillText("[R] 重新开始        [M] 返回主菜单", centerX, centerY + 120);
         g.setTextAlign(TextAlignment.LEFT);
     }
 
@@ -1098,10 +1247,22 @@ public final class GameRenderer {
         g.restore();
     }
 
-    private void drawDeathButton(GraphicsContext g, GameSession session, double x, double y,
-                                 double width, double height, String label, boolean menu) {
-        boolean hover = session.getAimX() >= x && session.getAimX() <= x + width
-                && session.getAimY() >= y && session.getAimY() <= y + height;
+    /**
+     * 结算界面的按钮：阵亡与通关共用同一套画法与同一份几何。
+     *
+     * <p>悬停判断读鼠标位置（{@code session.getAimX/Y()}），与点击命中用的是
+     * {@link SettlementButtons} 里同一个矩形，所以"看起来指着哪个"和"点下去是哪个"必然一致。
+     *
+     * @param button 按钮几何（来自 {@link SettlementButtons}）
+     * @param menu   是否是"返回主菜单"（换一套配色，和"重新开始"区分开）
+     */
+    private void drawSettlementButton(GraphicsContext g, GameSession session,
+                                      SettlementButtons.Button button, String label, boolean menu) {
+        double x = button.x();
+        double y = button.y();
+        double width = button.width();
+        double height = button.height();
+        boolean hover = button.contains(session.getAimX(), session.getAimY());
         g.setFill(Color.rgb(0, 0, 0, .35)); g.fillRoundRect(x + 4, y + 5, width, height, 10, 10);
         Color base = menu ? Color.web("#6b4a92") : Color.web("#9a5d72");
         g.setFill(hover ? base.brighter() : base);
@@ -1112,27 +1273,34 @@ public final class GameRenderer {
         g.fillText(label, x + width / 2.0, y + 31 - (hover ? 2 : 0));
     }
 
-    /** 打通第五层、穿过最后一道裂隙后的通关界面。 */
+    /**
+     * 打通第五层、穿过最后一道裂隙后的通关界面。
+     *
+     * <p>与阵亡结算保持一致：既显示可点击的按钮，也保留 [R] / [M] 快捷键提示——
+     * 两种输入方式在同一个界面上都能用，玩家不必先猜"这一屏认哪个键"。
+     */
     private void drawVictoryOverlay(GraphicsContext g, GameSession session) {
+        double centerX = AppConfig.VIEW_WIDTH / 2.0;
+        double centerY = AppConfig.VIEW_HEIGHT / 2.0;
         g.setFill(Color.rgb(10, 6, 18, 0.82));
         g.fillRect(0, 0, AppConfig.VIEW_WIDTH, AppConfig.VIEW_HEIGHT);
         g.setTextAlign(TextAlignment.CENTER);
         g.setFill(Color.web("#ffeaa7"));
         g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, 44));
-        g.fillText("穿 越 完 成", AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0 - 34);
+        g.fillText("穿 越 完 成", centerX, centerY - 92);
         g.setFont(Font.font("Microsoft YaHei UI", 19));
         g.setFill(Color.web("#e5d3f5"));
-        g.fillText(session.getTotalFloors() + " 层裂隙全部走尽",
-                AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0 + 8);
+        g.fillText(session.getTotalFloors() + " 层裂隙全部走尽", centerX, centerY - 54);
         g.setFont(Font.font("Microsoft YaHei UI", 16));
         g.setFill(Color.web("#e8d8f7"));
-        g.fillText("击杀 " + session.getTotalKills() + " · 用时 " + formatDuration(session.getVisualTime())
-                        + " · 金币 " + session.getCoins(),
-                AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0 + 36);
-        g.setFont(Font.font("Microsoft YaHei UI", 16));
+        g.fillText("击杀 " + session.getTotalKills() + " · 用时 " + formatDuration(session.getRunTime())
+                + " · 金币 " + session.getCoins(), centerX, centerY - 22);
+        // 按钮压在文字下方：位置由 SettlementButtons 统一给出，点击命中读的是同一份坐标。
+        drawSettlementButton(g, session, SettlementButtons.RESTART, "再来一局", false);
+        drawSettlementButton(g, session, SettlementButtons.MAIN_MENU, "返回主菜单", true);
+        g.setFont(Font.font("Microsoft YaHei UI", 15));
         g.setFill(Color.web("#c9b4ca"));
-        g.fillText("[R] 再来一局        [M] 返回主菜单",
-                AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0 + 58);
+        g.fillText("[R] 再来一局        [M] 返回主菜单", centerX, centerY + 120);
         g.setTextAlign(TextAlignment.LEFT);
     }
 
@@ -1766,6 +1934,7 @@ public final class GameRenderer {
             if (!room.isDiscovered()) continue;
             for (var edge : room.neighbors().entrySet()) {
                 Room neighbor = session.getNavigation().getMap().room(edge.getValue());
+                if (!isVisibleOnMiniMap(session, room) || !isVisibleOnMiniMap(session, neighbor)) continue;
                 if (!neighbor.isDiscovered() || room.id() > neighbor.id()) continue;
                 boolean usable = (room == current && room.isDoorOpen(edge.getKey()))
                         || (neighbor == current && neighbor.isDoorOpen(edge.getKey().opposite()));
@@ -1779,7 +1948,7 @@ public final class GameRenderer {
         }
 
         for (Room room : session.getNavigation().getMap().rooms()) {
-            if (!room.isDiscovered()) continue;
+            if (!room.isDiscovered() || !isVisibleOnMiniMap(session, room)) continue;
             double x = originX + (room.mapX() - current.mapX()) * scale;
             double y = originY + (room.mapY() - current.mapY()) * scale;
             if (room == current) {
@@ -1815,13 +1984,21 @@ public final class GameRenderer {
                 g.setLineWidth(1.0);
                 g.strokeOval(x + 5, y - 13, 8, 8);
             }
-            if (room.hasHiddenExit() && room.isVisited()) {
-                g.setFill(Color.web("#f4d06f"));
+            if (room.hasHiddenExit() && room.isVisited()
+                    && requiredFormOf(session, room) == session.getPlayer().getCurrentWorld()) {
+                // 小地图上的隐藏出口标记同样按"需要哪种形态"着色，玩家不必跑回房间才知道。
+                g.setFill(hiddenRouteColor(requiredFormOf(session, room)));
                 g.fillOval(x - 4, y - 16, 8, 8);
             }
         }
         g.restore();
         drawMiniMapLegend(g, panelX, panelY + panelSize);
+    }
+
+    /** 隐藏路线只会在入口所要求的形态中出现在小地图上。 */
+    private static boolean isVisibleOnMiniMap(GameSession session, Room room) {
+        if (room.type() != RoomType.HIDDEN) return true;
+        return room.requiredEntryForm() == session.getPlayer().getCurrentWorld();
     }
 
     /**
@@ -1861,7 +2038,11 @@ public final class GameRenderer {
         g.setTextAlign(TextAlignment.CENTER);
         g.setFont(Font.font("Microsoft YaHei UI", FontWeight.BOLD, glyphSize));
         g.setFill(room.type() == RoomType.SHOP ? Color.web("#ffe08a")
-                : room.type() == RoomType.HIDDEN ? Color.web("#f4d06f") : Color.web("#d9bcff"));
+                // 隐藏房已经走到过之后，用它的主题色记住"这间当初要哪种形态"。
+                : room.type() == RoomType.HIDDEN
+                        ? hiddenRouteColor(room.requiredEntryForm() == null
+                                ? WorldType.LIGHT : room.requiredEntryForm())
+                        : Color.web("#d9bcff"));
         g.fillText(glyph, x, y + glyphSize * 0.36);
         g.setTextAlign(TextAlignment.LEFT);
         return true;
@@ -2275,6 +2456,7 @@ public final class GameRenderer {
 
     private void drawAbilityHudIcons(GraphicsContext g, GameSession session, boolean light) {
         var abilities = session.getAbilities();
+        Player player = session.getPlayer();
         String form = light ? "light" : "shadow";
         String[] keys = {form + "_skill_01", form + "_skill_02", form + "_finisher"};
         String[] labels = {"Q", "E", "R"};
@@ -2283,28 +2465,47 @@ public final class GameRenderer {
             double x = HUD_X + 14 + i * 48.0;
             double y = HUD_Y + 91;
             Image icon = ABILITY_ICONS.get(keys[i]);
-            double cooldown = i < 2 ? abilities.skillCooldown(i) : abilities.finisherCooldown();
-            boolean ready = cooldown <= 0.0001 && (i < 2
-                    ? session.getPlayer().getSkillEnergy() >= GameConfig.SKILL_ENERGY_COST
-                    : session.getPlayer().getPhaseEnergy() >= GameConfig.FINISHER_PHASE_COST);
+            boolean finisher = i == 2;
+            double cooldown = finisher ? abilities.finisherCooldown() : abilities.skillCooldown(i);
+            double maxCooldown = finisher ? GameConfig.FINISHER_COOLDOWN : GameConfig.SKILL_COOLDOWN;
+            boolean onCooldown = cooldown > 0.0001;
+            // 资源门槛：技能吃蓝量，终结技吃相位能量。
+            boolean hasResource = finisher
+                    ? player.getPhaseEnergy() >= GameConfig.FINISHER_PHASE_COST
+                    : player.getSkillEnergy() >= GameConfig.SKILL_ENERGY_COST;
+            boolean ready = !onCooldown && hasResource;
             g.setFill(Color.rgb(5, 4, 10, 0.88));
             g.fillRoundRect(x - 2, y - 2, size + 4, size + 4, 6, 6);
             if (icon != null) {
-                g.setGlobalAlpha(ready ? 1.0 : 0.38);
                 g.drawImage(icon, x, y, size, size);
-                g.setGlobalAlpha(1.0);
             } else {
-                g.setFill(i == 2 ? Color.web("#b76cff") : Color.web("#67b9ff"));
+                g.setFill(finisher ? Color.web("#b76cff") : Color.web("#67b9ff"));
                 g.fillRoundRect(x + 3, y + 3, size - 6, size - 6, 5, 5);
             }
+            // 放不出来时把图标压深（而不是淡出）：仍认得出是哪个技能，但一眼知道现在按不出去。
+            // 冷却与缺蓝都会走到这里——两者都能通过下面的冷却秒数进一步区分。
             if (!ready) {
-                g.setFill(Color.rgb(0, 0, 0, 0.58));
-                g.fillArc(x, y, size, size, 90, 360 * Math.min(1, cooldown / (i == 2 ? GameConfig.FINISHER_COOLDOWN : GameConfig.SKILL_COOLDOWN)), ArcType.ROUND);
+                g.setFill(Color.rgb(2, 1, 6, 0.62));
+                g.fillRoundRect(x, y, size, size, 4, 4);
             }
+            if (onCooldown) {
+                g.setFill(Color.rgb(0, 0, 0, 0.55));
+                g.fillArc(x, y, size, size, 90,
+                        360 * Math.min(1.0, cooldown / maxCooldown), ArcType.ROUND);
+            }
+            // 图标下面：按键 + 剩余冷却秒数（没有冷却时只显示按键，缺蓝不会误读成"在冷却"）。
+            g.setTextAlign(TextAlignment.CENTER);
             g.setFill(Color.web("#f7efff"));
             g.setFont(Font.font("Consolas", FontWeight.BOLD, 10));
-            g.fillText(labels[i], x + 8, y + size + 11);
+            g.fillText(onCooldown ? labels[i] + " " + formatCooldown(cooldown) : labels[i],
+                    x + size / 2.0, y + size + 11);
+            g.setTextAlign(TextAlignment.LEFT);
         }
+    }
+
+    /** 图标下显示的冷却秒数：10 秒以上只留整数，避免挤到相邻图标。 */
+    private static String formatCooldown(double seconds) {
+        return seconds >= 10.0 ? String.format("%.0f", seconds) : String.format("%.1f", seconds);
     }
 
     /**
@@ -2360,7 +2561,7 @@ public final class GameRenderer {
         g.setTextAlign(TextAlignment.CENTER);
         g.setFill(light ? Color.rgb(237, 210, 156, 0.56) : Color.rgb(198, 169, 230, 0.58));
         g.setFont(Font.font("Microsoft YaHei UI", 13));
-        g.fillText("WASD 移动 · 左键普攻 · Q/E 技能 · R 终结技 · 空格闪避 · Ctrl 切界 · F 交互 · 1-3 丢装备 · Esc 暂停",
+        g.fillText("WASD 移动 · 左键普攻 · 右键 蓄力/格挡 · Q/E 技能 · R 终结技 · 空格闪避 · Ctrl 切界 · F 交互 · 1-3 丢装备 · Esc 暂停",
                 AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT - 24.0);
         g.setTextAlign(TextAlignment.LEFT);
     }

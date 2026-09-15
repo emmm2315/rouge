@@ -177,6 +177,22 @@
     -fx-text-fill: rgba(184, 172, 164, 0.55);
 }
 
+.progress-scroll { -fx-background: rgba(8, 7, 12, 0.72); -fx-background-color: rgba(8, 7, 12, 0.72); -fx-border-color: rgba(181, 153, 103, 0.48); }
+.progress-scroll > .scroll-bar:horizontal { -fx-pref-height: 0; -fx-max-height: 0; -fx-opacity: 0; }
+.progress-scroll > .scroll-bar:vertical { -fx-pref-width: 9px; -fx-background-color: transparent; -fx-padding: 2px; }
+.progress-scroll > .scroll-bar:vertical .track { -fx-background-color: rgba(255, 255, 255, 0.07); -fx-background-radius: 5px; }
+.progress-scroll > .scroll-bar:vertical .thumb { -fx-background-color: linear-gradient(to bottom, #d4aa5c, #8b5abb); -fx-background-radius: 5px; }
+.progress-scroll > .scroll-bar:vertical .increment-button,
+.progress-scroll > .scroll-bar:vertical .decrement-button { -fx-padding: 0; -fx-opacity: 0; }
+.equipment-card, .equipment-card-locked { -fx-padding: 10px; -fx-min-width: 220px; -fx-min-height: 135px; -fx-background-color: rgba(20, 16, 28, 0.88); -fx-border-width: 2px; }
+.equipment-card { -fx-border-color: rgba(232, 189, 104, 0.66); }
+.equipment-card-locked { -fx-border-color: rgba(130, 120, 142, 0.35); -fx-opacity: 0.60; }
+.equipment-card-title { -fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: #f0d59c; }
+.equipment-card-detail { -fx-font-size: 12px; -fx-text-fill: #d7cddd; -fx-text-alignment: center; }
+.achievement-unlocked, .achievement-locked { -fx-min-width: 540px; -fx-padding: 12px 16px; -fx-font-size: 16px; -fx-border-width: 2px; }
+.achievement-unlocked { -fx-text-fill: #ffe6a6; -fx-background-color: rgba(67, 48, 21, 0.70); -fx-border-color: rgba(232, 189, 104, 0.72); }
+.achievement-locked { -fx-text-fill: #8f8898; -fx-background-color: rgba(20, 17, 26, 0.72); -fx-border-color: rgba(130, 120, 142, 0.35); }
+
 .menu-overlay {
     -fx-background-color: radial-gradient(center 50% 50%, radius 70%, rgba(43, 24, 64, 0.96), #050409);
 }
@@ -238,6 +254,19 @@
 .world-shift-flash {
     -fx-background-color: rgba(255, 255, 255, 0.70);
 }
+
+/* 右上角成就提示：刻意保持小尺寸，不抢 HUD 和战斗画面。 */
+.achievement-toast {
+    -fx-min-width: 248px;
+    -fx-max-width: 248px;
+    -fx-padding: 10px 13px;
+    -fx-background-color: rgba(15, 12, 21, 0.94);
+    -fx-border-color: linear-gradient(to right, #e8bd68, #9b65dc);
+    -fx-border-width: 2px;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.72), 10, 0.25, 2, 3);
+}
+.achievement-toast-title { -fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: #ffe6a6; }
+.achievement-toast-description { -fx-font-size: 12px; -fx-text-fill: #d7cddd; -fx-wrap-text: true; }
 
 .shift-to-light {
     -fx-background-color: radial-gradient(center 50% 50%, radius 70%, #fff4d0, rgba(232, 189, 104, 0.44));

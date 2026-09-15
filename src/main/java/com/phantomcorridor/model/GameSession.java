@@ -8,6 +8,7 @@ import com.phantomcorridor.model.entity.EnemyKind;
 import com.phantomcorridor.model.entity.Player;
 import com.phantomcorridor.model.combat.PlayerAttackSystem;
 import com.phantomcorridor.model.combat.PlayerAbilitySystem;
+import com.phantomcorridor.model.combat.PlayerStanceSystem;
 import com.phantomcorridor.model.combat.EnemyProjectileSystem;
 import com.phantomcorridor.model.combat.EnemySystem;
 import com.phantomcorridor.model.combat.SummonRift;
@@ -16,14 +17,17 @@ import com.phantomcorridor.model.room.RoomContentSystem;
 import com.phantomcorridor.model.room.RoomNavigationSystem;
 import com.phantomcorridor.model.room.Room;
 import java.util.List;
+import java.util.EnumSet;
+import java.util.Set;
 
-/** 一局游戏的聚合状态。后续房间、敌人、掉落都从这里接入。 */
+/** 一局游戏的聚合状态，协调移动、战斗、房间交互与结算。 */
 public final class GameSession {
 
     private final Player player = new Player(AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0);
     private final WorldShiftSystem worldShift = new WorldShiftSystem();
     private final PlayerAttackSystem attackSystem = new PlayerAttackSystem();
     private final PlayerAbilitySystem abilities = new PlayerAbilitySystem();
+    private final PlayerStanceSystem stance = new PlayerStanceSystem();
     private final EnemyProjectileSystem enemyProjectiles = new EnemyProjectileSystem();
     private final EnemySystem enemies = new EnemySystem();
     private final RoomNavigationSystem navigation = new RoomNavigationSystem();
@@ -33,18 +37,25 @@ public final class GameSession {
     private int floor = 1;
     private Difficulty difficulty = Difficulty.NORMAL;
     private boolean runCleared;
+    private boolean bossDefeated;
+    private final Set<EnemyKind> defeatedBossKinds = EnumSet.noneOf(EnemyKind.class);
     private double phasePulseVisibleRemaining;
     private double aimX;
     private double aimY;
     private double visualTime;
     public double getVisualTime() { return visualTime; }
+    /**
+     * 本局实际游玩用时（秒）。
+     *
+     * <p>与 {@link #visualTime} 分开：{@code visualTime} 是给动画用的模拟时钟（传送门流光、
+     * 相位脉冲），通关后依然要走；而"用时"必须在本局结束（通关 / 阵亡）那一刻停住。
+     * 两者混用会让结算界面的计时一直涨下去——这就是"穿越完成后用时不会停下"的根因。
+     */
+    private double runTime;
     private int totalKills;
     private String roomAnnouncement = "";
     private double roomAnnouncementRemaining;
     private boolean floorAnnouncement;
-    // 未被引用（IDE 的 Unused 检查会报）：只被赋值、从未被读取，也没有对外暴露 getter。
-    // 需要“是否在战斗中”时直接问 enemies.isRoomCleared() 即可，先注释保留。
-    // private boolean combatActive;
     private boolean interactRequested;
     private boolean dashRequested;
     /** 上一帧影斩的释放次数：用来在“这一刀刚落下”的那一帧触发夜行披风。 */
@@ -64,6 +75,7 @@ public final class GameSession {
         player.reset(AppConfig.VIEW_WIDTH / 2.0, AppConfig.VIEW_HEIGHT / 2.0);
         worldShift.reset();
         visualTime = 0;
+        runTime = 0;
         totalKills = 0;
         abilities.reset();
         runSeed = MapGenerator.parseSeed(configuredSeed);
@@ -71,7 +83,9 @@ public final class GameSession {
         player.setDifficulty(this.difficulty);
         floor = 1;
         runCleared = false;
-        dashRequested = false;
+        bossDefeated = false;
+        defeatedBossKinds.clear();
+        clearPendingInput();
         aimX = player.getX() + 1.0;
         aimY = player.getY();
         startFloor();
@@ -86,6 +100,7 @@ public final class GameSession {
     private void startFloor() {
         dungeonSeed = runSeed + (floor - 1) * GameConfig.FLOOR_SEED_STEP;
         attackSystem.reset();
+        lastMeleeReleaseCount = attackSystem.getMeleeReleaseCount();
         abilities.clearRoomEffects();
         player.cancelAbilityAnimation();
         enemyProjectiles.reset();
@@ -100,8 +115,10 @@ public final class GameSession {
         // 护盾是“一层一条”的临时生命：进新一层时重置为一整条，层内打完就没有，
         // 既不会像回血那样无限续航，也保证每层开局都有一条可用的容错。
         player.refillShield();
+        // 形态右键机制不带过层：蓄力与格挡窗口都在新一层重新开始。
+        player.cancelCharge();
+        player.clearBlock();
         phasePulseVisibleRemaining = 0.0;
-        // combatActive = false;   // 见字段处的说明：这个状态没有任何读取点
         roomAnnouncement = floorAnnouncement();
         roomAnnouncementRemaining = 2.6;
         floorAnnouncement = true;
@@ -122,10 +139,15 @@ public final class GameSession {
     public void update(double dt, double movementX, double movementY,
                        double targetX, double targetY, boolean attacking) {
         visualTime += Math.max(0, dt);
+        // 本局"用时"只在本局还没结束时累计：通关 / 阵亡之后必须停住，
+        // 否则结算界面的计时会一直涨（bug：穿越完成后用时不会停下）。
+        if (player.getHp() > 0 && !runCleared) runTime += Math.max(0, dt);
         worldShift.update(dt);
         phasePulseVisibleRemaining = Math.max(0.0, phasePulseVisibleRemaining - dt);
         roomAnnouncementRemaining = Math.max(0.0, roomAnnouncementRemaining - Math.max(0.0, dt));
         if (player.getHp() <= 0 || runCleared) {
+            player.cancelCharge();
+            player.clearBlock();
             abilities.clearRoomEffects();
             player.cancelAbilityAnimation();
             player.updateDash(dt);
@@ -134,13 +156,15 @@ public final class GameSession {
         }
         aimX = targetX;
         aimY = targetY;
-        navigation.setHiddenExitLocked(isInCombat());
+        // 形态右键机制在移动之前结算：蓄力会压低移速，必须当帧生效。
+        stance.update(player, attackSystem, attacking, aimX, aimY);
         double movementStartX = player.getX();
         double movementStartY = player.getY();
         // 冲刺优先于普通移动：冲刺期间忽略方向输入，位移完全由冲刺方向决定。
         if (dashRequested) {
             dashRequested = false;
-            if (!abilities.isCasting()) player.tryStartDash(movementX, movementY);
+            // 冲刺是保命动作，优先级高于蓄力：真的冲出去就把这次蓄力放掉（没冲成不惩罚）。
+            if (!abilities.isCasting() && player.tryStartDash(movementX, movementY)) player.cancelCharge();
         }
         if (player.isDashing()) {
             // 只走"这一段冲刺还剩的时间"：否则最后一帧会按整帧位移，固定 150 像素会随帧对齐漂移。
@@ -155,17 +179,7 @@ public final class GameSession {
         if (!player.isDashing()) player.advanceWalkDistance(Math.min(Math.hypot(actualMovementX, actualMovementY),
                 player.movementSpeed() * Math.max(0, dt)));
         player.updateDash(dt);
-        if (navigation.consumeRoomChanged()) {
-            abilities.clearRoomEffects();
-            player.cancelAbilityAnimation();
-            attackSystem.clearTransientAttacks();
-            Room entered = navigation.getCurrentRoom();
-            roomContent.enterRoom(entered, player);
-            enemies.enterRoom(entered, dungeonSeed, player, navigation);
-            roomAnnouncement = roomAnnouncement(entered);
-            roomAnnouncementRemaining = 2.2;
-            floorAnnouncement = false;
-        }
+        if (navigation.consumeRoomChanged()) enterCurrentRoom();
         // 房间内容只在第一次进入时生成，进出不会重刷；这里只维护“待确认商品”的有效性。
         roomContent.update(navigation.getCurrentRoom(), player);
         attackSystem.update(dt, navigation);
@@ -177,6 +191,50 @@ public final class GameSession {
         abilities.update(dt, player, enemies, navigation);
         enemies.update(dt, player, attackSystem, navigation);
         applyHitKnockback();
+        Room current = navigation.getCurrentRoom();
+        settleCombat(current);
+        if (interactRequested) {
+            interactRequested = false;
+            interact(current);
+        }
+        player.restorePhaseEnergy(phaseEnergyRegenRate() * dt);
+        player.updateSkillEnergy(dt);
+        // 蓄力期间左键不再是普攻：它的语义是"把这一发蓄力弹打出去"（见 updateStance）。
+        if (attacking && !abilities.isCasting() && !player.isCharging()) {
+            attackSystem.tryAttack(player, aimX, aimY);
+        }
+        // Animation follows actual movement and successful attack events, not held input.
+        player.updateAnimation(dt, actualMovementX, actualMovementY,
+                phasePulseVisibleRemaining > 0.0);
+    }
+
+    /** 丢弃尚未消费的操作，供重开、暂停和失焦时使用。 */
+    public void clearPendingInput() {
+        interactRequested = false;
+        dashRequested = false;
+        stance.reset();
+        player.cancelCharge();
+        player.endBlockWindow();
+    }
+
+    /** 换房清理只影响瞬时战斗状态，保留资源和技能冷却。 */
+    private void enterCurrentRoom() {
+        abilities.clearRoomEffects();
+        player.cancelAbilityAnimation();
+        attackSystem.clearTransientAttacks();
+        // 换房时形态右键机制一并清空：格挡窗口不该跨房间留着，强化也不该带到下一间。
+        player.cancelCharge();
+        player.clearBlock();
+        Room entered = navigation.getCurrentRoom();
+        roomContent.enterRoom(entered, player);
+        enemies.enterRoom(entered, dungeonSeed, player, navigation);
+        roomAnnouncement = roomAnnouncement(entered);
+        roomAnnouncementRemaining = 2.2;
+        floorAnnouncement = false;
+    }
+
+    /** 消费战斗事件一次，并将击杀奖励和清房状态同步到本局。 */
+    private void settleCombat(Room current) {
         if (enemies.consumePhaseTransitions() > 0) {
             EnemyKind transformed = getBossKind();
             roomAnnouncement = (transformed == null ? "首领" : transformed.displayName()) + " · 二阶段"
@@ -190,28 +248,16 @@ public final class GameSession {
             roomAnnouncementRemaining = 2.0;
         }
         int kills = enemies.consumeKills();
+        defeatedBossKinds.addAll(enemies.consumeDefeatedBosses());
         if (kills > 0) totalKills += kills;
         int phaseReward = enemies.consumePhaseEnergyReward();
-        Room current = navigation.getCurrentRoom();
         if (current.type() == RoomType.BATTLE || current.type() == RoomType.BOSS
                 || current.type() == RoomType.EVENT) {
             current.setCleared(enemies.isRoomCleared());
         }
+        if (current.type() == RoomType.BOSS && current.isCleared()) bossDefeated = true;
         if (phaseReward > 0) player.restorePhaseEnergy(phaseReward);
         if (kills > 0) player.addCoins(kills + Math.floorMod((int) (dungeonSeed + kills * 13L), kills * 3 + 1));
-        // combatActive = !enemies.isRoomCleared();   // 同上：这个状态没有任何读取点
-        if (interactRequested) {
-            interactRequested = false;
-            interact(current);
-        }
-        player.restorePhaseEnergy(phaseEnergyRegenRate() * dt);
-        player.updateSkillEnergy(dt);
-        if (attacking && !abilities.isCasting()) {
-            attackSystem.tryAttack(player, aimX, aimY);
-        }
-        // Animation follows actual movement and successful attack events, not held input.
-        player.updateAnimation(dt, actualMovementX, actualMovementY,
-                phasePulseVisibleRemaining > 0.0);
     }
 
     /**
@@ -226,21 +272,37 @@ public final class GameSession {
         return GameConfig.PHASE_ENERGY_REGEN_PER_SEC * multiplier;
     }
 
+    /**
+     * 控制器每帧上报右键是否按着。
+     *
+     * <p>只传"当前状态"，不传事件：这样暂停、失焦、鼠标移出窗口都只是把状态置回 false，
+     * 不会留下"以为还按着"的悬空状态。
+     */
+    public void setSecondaryHeld(boolean held) { stance.setSecondaryHeld(held); }
+
+    /** 本局实际游玩用时（秒）；通关 / 阵亡后停止累计。 */
+    public double getRunTime() { return runTime; }
+
     public boolean tryShiftWorld() {
         return tryShiftWorld(false);
     }
 
     public boolean tryUseAbility(boolean finisher, double targetX, double targetY) {
         if (runCleared || getPendingEquipment() != null) return false;
-        return finisher
+        boolean cast = finisher
                 ? abilities.tryCastFinisher(player, targetX, targetY, navigation)
                 : abilities.tryCast(player, 0, targetX, targetY, navigation);
+        // 施法与蓄力互斥：真的放出技能就把这次蓄力放弃，避免两个动作叠在同一帧。
+        if (cast) player.cancelCharge();
+        return cast;
     }
 
     /** 释放第二个形态技能；技能槽 0 仍由旧的 Q 接口兼容。 */
     public boolean tryUseSkill(int skillIndex, double targetX, double targetY) {
         if (runCleared || getPendingEquipment() != null) return false;
-        return abilities.tryCast(player, skillIndex, targetX, targetY, navigation);
+        boolean cast = abilities.tryCast(player, skillIndex, targetX, targetY, navigation);
+        if (cast) player.cancelCharge();
+        return cast;
     }
 
     /** 统一命名的重载，供 UI/自动化输入按技能槽调用。 */
@@ -270,6 +332,10 @@ public final class GameSession {
         }
         // 切界成功：打开相位陀螺的攻速窗口，并结束夜行披风的影界加速。
         attackSystem.cancelForWorldShift();
+        // 形态右键机制跟不上切界：蓄力直接放掉，格挡的无敌窗口也立刻结束
+        // （已经攒下的"强化暗影普攻"保留——它本来就是留给下一次暗影普攻的）。
+        player.cancelCharge();
+        player.endBlockWindow();
         player.onWorldShifted();
         enemies.onWorldChanged(player.getCurrentWorld());
         return true;
@@ -329,6 +395,11 @@ public final class GameSession {
 
     /** 是否已经打通最后一层：渲染层据此显示通关界面。 */
     public boolean isRunCleared() { return runCleared; }
+    /** 本局是否至少已击败一名首领。 */
+    public boolean hasDefeatedBoss() { return bossDefeated; }
+    /** 本局已击败的首领种类，供档案累积“全首领”进度。 */
+    public Set<EnemyKind> getDefeatedBossKinds() { return Set.copyOf(defeatedBossKinds); }
+    public java.util.Set<EquipmentType> getCollectedEquipment() { return roomContent.collectedEquipment(); }
 
     /** 当前房间是否站着通往下一层的传送门。 */
     public boolean isPortalVisible() { return navigation.getCurrentRoom().hasPortal(); }

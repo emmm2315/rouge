@@ -2,9 +2,11 @@ package com.phantomcorridor.controller;
 
 import com.phantomcorridor.core.GameLoop;
 import com.phantomcorridor.model.GameSession;
+import com.phantomcorridor.model.Achievement;
+import com.phantomcorridor.model.PlayerProgress;
 import com.phantomcorridor.view.GameView;
+import com.phantomcorridor.view.SettlementButtons;
 import javafx.scene.input.KeyCode;
-import com.phantomcorridor.config.AppConfig;
 import com.phantomcorridor.config.Settings;
 import java.util.function.Consumer;
 
@@ -20,6 +22,8 @@ public final class GameController {
     private boolean shiftHeld;
     private boolean interactHeld;
     private boolean attackHeld;
+    /** 右键按住状态：光形态=蓄力，影形态=按下瞬间开启格挡。 */
+    private boolean secondaryHeld;
     private boolean dashHeld;
     private boolean skillHeld, skill2Held, finisherHeld, modifierHeld;
     private double aimX;
@@ -27,6 +31,7 @@ public final class GameController {
     private final Settings settings;
     private final Runnable onMainMenu;
     private final Consumer<GameSession> onSessionUpdated;
+    private final PlayerProgress progress;
 
     public GameController(GameView view, Runnable onPauseRequested, Settings settings) {
         this(view, onPauseRequested, settings, () -> { }, session -> { });
@@ -39,17 +44,26 @@ public final class GameController {
     /** @param onSessionUpdated 用于同步音乐等只读的表现层状态。 */
     public GameController(GameView view, Runnable onPauseRequested, Settings settings, Runnable onMainMenu,
                           Consumer<GameSession> onSessionUpdated) {
+        this(view, onPauseRequested, settings, onMainMenu, onSessionUpdated, new PlayerProgress());
+    }
+
+    public GameController(GameView view, Runnable onPauseRequested, Settings settings, Runnable onMainMenu,
+                          Consumer<GameSession> onSessionUpdated, PlayerProgress progress) {
         this.view = view;
         this.onPauseRequested = onPauseRequested;
         this.settings = settings;
         this.onMainMenu = onMainMenu;
         this.onSessionUpdated = onSessionUpdated == null ? session -> { } : onSessionUpdated;
+        this.progress = progress == null ? new PlayerProgress() : progress;
         this.loop = new GameLoop() {
             @Override
             protected void update(double dt) {
                 // 替换选择面板是模态的：面板开着时不推进攻击，玩家的手不需要在“选槽位”和“松开鼠标”之间分心。
-                boolean attacking = attackHeld && session.getPendingEquipment() == null;
+                boolean panelOpen = session.getPendingEquipment() != null;
+                boolean attacking = attackHeld && !panelOpen;
+                session.setSecondaryHeld(secondaryHeld && !panelOpen);
                 session.update(dt, input.horizontal(), input.vertical(), aimX, aimY, attacking);
+                updateProgress();
                 GameController.this.onSessionUpdated.accept(session);
             }
             @Override
@@ -59,19 +73,37 @@ public final class GameController {
         };
         view.bindInput(this::keyPressed, this::keyReleased);
         view.bindPointer(this::pointerMoved, held -> attackHeld = held);
+        view.bindSecondary(held -> secondaryHeld = held);
         view.bindClick(this::pointerClicked);
         view.bindLifecycle(this::start, this::stop);
-        session.newRun(settings.getDevSeed());
+        newRun();
+    }
+
+    private void updateProgress() {
+        session.getCollectedEquipment().forEach(progress::discover);
+        if (progress.hasDiscoveredEveryEquipment() && progress.unlock(Achievement.ALL_EQUIPMENT)) {
+            view.showAchievementUnlocked(Achievement.ALL_EQUIPMENT);
+        }
+        session.getDefeatedBossKinds().forEach(progress::recordBossDefeat);
+        if (session.hasDefeatedBoss() && progress.unlock(Achievement.BOSS_SLAYER)) {
+            view.showAchievementUnlocked(Achievement.BOSS_SLAYER);
+        }
+        if (progress.hasDefeatedEveryBoss() && progress.unlock(Achievement.ALL_BOSSES)) {
+            view.showAchievementUnlocked(Achievement.ALL_BOSSES);
+        }
+        if (!session.isRunCleared()) return;
+        Achievement clearAchievement = switch (session.getDifficulty()) {
+            case EASY -> Achievement.EASY_CLEAR;
+            case NORMAL -> Achievement.NORMAL_CLEAR;
+            case HARD -> Achievement.HARD_CLEAR;
+            case INSANE -> Achievement.INSANE_CLEAR;
+        };
+        if (progress.unlock(clearAchievement)) view.showAchievementUnlocked(clearAchievement);
     }
 
     public void newRun() {
         session.newRun(settings.getDevSeed(), settings.getDifficulty());
-        input.clear();
-        shiftHeld = false;
-        interactHeld = false;
-        attackHeld = false;
-        dashHeld = false;
-        skillHeld = skill2Held = finisherHeld = modifierHeld = false;
+        resetInput();
         aimX = session.getPlayer().getX() + 1.0;
         aimY = session.getPlayer().getY();
         onSessionUpdated.accept(session);
@@ -90,21 +122,23 @@ public final class GameController {
             loop.stop();
             running = false;
         }
+        resetInput();
+    }
+
+    private void resetInput() {
         input.clear();
         shiftHeld = false;
         interactHeld = false;
         attackHeld = false;
+        secondaryHeld = false;
+        session.clearPendingInput();
         dashHeld = false;
         skillHeld = skill2Held = finisherHeld = modifierHeld = false;
     }
 
     private void keyPressed(KeyCode key) {
-        if (session.getPlayer().getHp() <= 0) {
-            // 死亡结算保持“只能点击按钮”的交互约定。
-            return;
-        }
-        // 通关结算沿用上游的快捷重开/返回主菜单。
-        if (session.isRunCleared()) {
+        // 结算界面（阵亡 / 通关）统一：R 重开一局、M 返回主菜单，键盘与鼠标两种方式都能选。
+        if (isRunOver()) {
             if (key == KeyCode.R) newRun();
             else if (key == KeyCode.M) onMainMenu.run();
             return;
@@ -193,15 +227,22 @@ public final class GameController {
         aimY = y;
     }
 
+    /**
+     * 本局是否已经结束（阵亡或通关）。
+     *
+     * <p>结算界面同时接受键盘（R / M）与鼠标点击，两种方式等价——
+     * 玩家不需要先猜"这一屏认哪个输入"。
+     */
+    private boolean isRunOver() {
+        return session.isRunCleared() || session.getPlayer().getHp() <= 0;
+    }
+
     private void pointerClicked(double x, double y) {
-        if (session.getPlayer().getHp() > 0) return;
-        double centerX = AppConfig.VIEW_WIDTH / 2.0;
-        double centerY = AppConfig.VIEW_HEIGHT / 2.0;
-        double buttonY = centerY + 44.0;
-        if (y < buttonY || y > buttonY + 50.0) return;
-        if (x >= centerX - 170.0 && x <= centerX - 30.0) {
+        if (!isRunOver()) return;
+        // 命中判定与渲染共用 SettlementButtons 里同一份矩形，避免"看到的按钮"与"点得中的位置"错位。
+        if (SettlementButtons.RESTART.contains(x, y)) {
             newRun();
-        } else if (x >= centerX + 30.0 && x <= centerX + 170.0) {
+        } else if (SettlementButtons.MAIN_MENU.contains(x, y)) {
             onMainMenu.run();
         }
     }

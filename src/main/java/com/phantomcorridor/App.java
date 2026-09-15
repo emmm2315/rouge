@@ -9,6 +9,7 @@ import com.phantomcorridor.controller.MainMenuController;
 import com.phantomcorridor.controller.SceneManager;
 import com.phantomcorridor.core.GameState;
 import com.phantomcorridor.model.PlayerProfile;
+import com.phantomcorridor.model.PlayerProgress;
 import com.phantomcorridor.view.GameView;
 import com.phantomcorridor.view.LoginView;
 import com.phantomcorridor.view.MainMenuView;
@@ -71,17 +72,19 @@ public class App extends Application {
         // 玩家档案与偏好设置分离，恢复默认设置不会再清空玩家身份。
         Settings settings = new Settings();
         audio = new AudioManager(settings);
-        PlayerProfile profile = PlayerProfile.loadLocal();
+        // 登录框始终留空，提交昵称后再选择对应档案与进度。
+        PlayerProfile profile = new PlayerProfile();
+        PlayerProgress progress = new PlayerProgress();
         sceneManager = new SceneManager(root);
 
-        LoginController loginController = new LoginController(profile, this::showMainMenu);
+        LoginController loginController = new LoginController(profile, progress, this::showMainMenu);
         MainMenuController mainMenuController = new MainMenuController(
-                this::showGame, stage::close, settings, profile);
+                this::showGame, stage::close, settings, profile, progress);
         loginView = loginController.getView();
         mainMenuView = mainMenuController.getView();
         gameView = new GameView();
         gameController = new GameController(gameView, this::showPause, settings, this::showMainMenu,
-                audio::syncGameMusic);
+                audio::syncGameMusic, progress);
         pauseView = new PauseView(this::resumeGame, this::showMainMenu);
         root.getChildren().addAll(loginView, mainMenuView, gameView, pauseView);
 

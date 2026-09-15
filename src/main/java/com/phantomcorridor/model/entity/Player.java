@@ -16,6 +16,9 @@ public final class Player {
     /** 装备栏容量固定为三个槽位；满栏时由交互层要求玩家显式选择替换或取消。 */
     public static final int EQUIPMENT_CAPACITY = 3;
 
+    /** 「格挡」提示相对人物脚下的上移量（像素）：落在躯干附近，读起来像"打在身上"。 */
+    private static final double BLOCK_FLASH_OFFSET_Y = 30.0;
+
     /** 受击结算结果：护盾吸收了多少、生命实际掉了多少、伤害类型是什么。 */
     public record DamageResult(double absorbedByShield, int healthLost, double remainingShield,
                                DamageType type) {
@@ -85,6 +88,19 @@ public final class Player {
     private double nightstepRemaining;
     /** 曜纹披肩：光界减伤的冷却剩余时间（秒）。 */
     private double sunweaveCooldownRemaining;
+    /** 光形态蓄力：已经按住右键的累计时间（秒）。 */
+    private double chargeTime;
+    /** 光形态蓄力：是否正在蓄力。 */
+    private boolean charging;
+    /** 影形态格挡：无敌窗口的剩余时间（秒）。 */
+    private double blockRemaining;
+    /** 影形态格挡：窗口内已经挡下过伤害，攒着一次强化下一次暗影普攻。 */
+    private boolean blockEmpower;
+    /** 影形态格挡：屏幕边缘「格挡」提示的剩余时间（秒），每次挡下攻击都重新点燃。 */
+    private double blockFlashRemaining;
+    /** 「格挡」提示出现的位置：挡下那一瞬间人物的受击处，之后不随人物移动。 */
+    private double blockFlashX;
+    private double blockFlashY;
 
     public Player(double x, double y) {
         reset(x, y);
@@ -134,6 +150,13 @@ public final class Player {
         this.gyroscopeRemaining = 0.0;
         this.nightstepRemaining = 0.0;
         this.sunweaveCooldownRemaining = 0.0;
+        this.chargeTime = 0.0;
+        this.charging = false;
+        this.blockRemaining = 0.0;
+        this.blockEmpower = false;
+        this.blockFlashRemaining = 0.0;
+        this.blockFlashX = 0.0;
+        this.blockFlashY = 0.0;
     }
 
     /**
@@ -146,6 +169,8 @@ public final class Player {
     public double movementSpeed() {
         double speed = GameConfig.PLAYER_BASE_SPEED * (isShiftSlowed() ? GameConfig.BASIC_SHIFT_SPEED : 1.0);
         if (abilityAnimationRemaining > 0) speed *= 0.5;
+        // 蓄力期间压低机动性：这是蓄力换来的高伤害必须付的代价，否则可以边走边蓄无风险输出。
+        if (charging) speed *= GameConfig.LIGHT_CHARGE_MOVE_MULTIPLIER;
         if (currentWorld != WorldType.SHADOW) return speed;
         speed *= GameConfig.SHADOW_SPEED_MULTIPLIER
                 * (1.0 + equipmentCount(EquipmentType.DUSK_CLOAK) * 0.10);
@@ -390,6 +415,7 @@ public final class Player {
         hitInvulnerability = Math.max(0.0, hitInvulnerability - Math.max(0.0, dt));
         hitFlashRemaining = Math.max(0.0, hitFlashRemaining - Math.max(0.0, dt));
         updateTemporaryEffects(dt);
+        updateStanceTimers(dt);
         abilityAnimationRemaining = Math.max(0, abilityAnimationRemaining - Math.max(0, dt));
         attackAnimationRemaining = Math.max(0.0, attackAnimationRemaining - Math.max(0.0, dt));
         hitAnimationRemaining = Math.max(0.0, hitAnimationRemaining - Math.max(0.0, dt));
@@ -471,7 +497,24 @@ public final class Player {
      * @return 本次受击的结算明细；未生效时返回 {@code null}
      */
     public DamageResult takeDamage(double damage, DamageType type, double sourceX, double sourceY) {
-        if (damage <= 0.0 || isDashing() || hitInvulnerability > 0.0 || hp <= 0) return null;
+        if (damage <= 0.0 || isDashing() || hp <= 0) return null;
+        // 影形态格挡：窗口内完全免伤。首次挡下伤害时授予"强化下一次暗影普攻"，
+        // 并把这次格挡的能量原样返还——挡住才算成功，空放要自己承担消耗。
+        if (isBlocking()) {
+            if (!blockEmpower) {
+                blockEmpower = true;
+                restoreAttackCharges(GameConfig.SHADOW_BLOCK_ENERGY_REFUND);
+            }
+            // 每一次挡下都重新点燃提示，并把它钉在"这一下打在哪儿"：
+            // 位置在受击当帧记录，之后不随人物移动，读起来才像一次命中反馈。
+            blockFlashRemaining = GameConfig.SHADOW_BLOCK_FLASH_TIME;
+            blockFlashX = x;
+            blockFlashY = y - BLOCK_FLASH_OFFSET_Y;
+            // 返回一份"全部被吸收"的结算：飘字走护盾通道，玩家看得见这一下被挡掉了。
+            return new DamageResult(damage, 0, shield.getCurrent(),
+                    type == null ? DamageType.PHYSICAL : type);
+        }
+        if (hitInvulnerability > 0.0) return null;
         damage = applySunweaveMitigation(damage);
         // Shield.absorb 返回的是“护盾没挡下、要继续打进生命值”的溢出量。
         double overflow = shield.absorb(damage);
@@ -519,6 +562,125 @@ public final class Player {
                 && equipmentCount(EquipmentType.SUNWEAVE_MANTLE) > 0
                 && sunweaveCooldownRemaining <= 0.0;
     }
+
+    // ---- 光形态蓄力（右键） ----
+
+    /** 是否正在蓄力。 */
+    public boolean isCharging() { return charging; }
+
+    /** 蓄力进度 0～1（1 表示已经蓄满）。 */
+    public double getChargeRatio() {
+        return Math.min(1.0, chargeTime / GameConfig.LIGHT_CHARGE_MAX_TIME);
+    }
+
+    /** 当前蓄力对应的伤害倍率：从 1 线性涨到 {@link GameConfig#LIGHT_CHARGE_MAX_MULTIPLIER}。 */
+    public double chargeDamageMultiplier() {
+        return 1.0 + (GameConfig.LIGHT_CHARGE_MAX_MULTIPLIER - 1.0) * getChargeRatio();
+    }
+
+    /** 蓄力是否已经够久、可以发射（短于最短蓄力时间视为误触）。 */
+    public boolean isChargeFireable() { return chargeTime >= GameConfig.LIGHT_CHARGE_MIN_TIME; }
+
+    /** 蓄力是否已经蓄满：蓄满的那一发才带无限穿透与叠满灼痕。 */
+    public boolean isChargeFull() { return charging && chargeTime >= GameConfig.LIGHT_CHARGE_MAX_TIME; }
+
+    /**
+     * 开始一次蓄力。
+     *
+     * <p>只有光形态、还活着、且拿得出 {@link GameConfig#LIGHT_CHARGE_ENERGY_COST} 点技能能量时才起手：
+     * 蓝量不足就不该开始蓄力，否则玩家按住 1.5 秒才发现这一发放不出去。
+     *
+     * @return 是否真的进入蓄力
+     */
+    public boolean beginCharge() {
+        if (charging || currentWorld != WorldType.LIGHT || hp <= 0) return false;
+        if (attackCharges < GameConfig.LIGHT_CHARGE_ENERGY_COST) return false;
+        charging = true;
+        chargeTime = 0.0;
+        // 蓄力期间角色不该还在播上一段普攻动作。
+        attackAnimationRemaining = 0.0;
+        return true;
+    }
+
+    /**
+     * 结算一次蓄力发射：结束蓄力、扣除固定能量，并返回这一发的伤害倍率。
+     *
+     * @return 伤害倍率；没有在蓄力时返回 0
+     */
+    public double consumeCharge() {
+        if (!charging) return 0.0;
+        double multiplier = chargeDamageMultiplier();
+        charging = false;
+        chargeTime = 0.0;
+        consumeSkillEnergy(GameConfig.LIGHT_CHARGE_ENERGY_COST);
+        return multiplier;
+    }
+
+    /** 放弃这次蓄力（切界、换房、阵亡、被打断）：不扣能量。 */
+    public void cancelCharge() {
+        charging = false;
+        chargeTime = 0.0;
+    }
+
+    /** 蓄力已经累计的时间（秒）；供测试与调试读取。 */
+    public double getChargeTime() { return chargeTime; }
+
+    // ---- 影形态格挡（右键） ----
+
+    /** 是否处于格挡的无敌窗口内。 */
+    public boolean isBlocking() { return blockRemaining > 0.0; }
+
+    /** 格挡窗口的剩余时间（秒）。 */
+    public double getBlockRemaining() { return blockRemaining; }
+
+    /**
+     * 启动一次格挡：扣 {@link GameConfig#SHADOW_BLOCK_ENERGY_COST} 点技能能量，
+     * 换取 {@link GameConfig#SHADOW_BLOCK_DURATION} 秒的完全免伤窗口。
+     *
+     * @return 是否真的进入格挡（已在格挡 / 不是影形态 / 能量不足时返回 false）
+     */
+    public boolean beginBlock() {
+        if (blockRemaining > 0.0 || currentWorld != WorldType.SHADOW || hp <= 0) return false;
+        if (attackCharges < GameConfig.SHADOW_BLOCK_ENERGY_COST) return false;
+        consumeSkillEnergy(GameConfig.SHADOW_BLOCK_ENERGY_COST);
+        blockRemaining = GameConfig.SHADOW_BLOCK_DURATION;
+        return true;
+    }
+
+    /** 是否已经攒着一次"格挡成功"的强化（下一次暗影普攻 ×10）。 */
+    public boolean hasBlockEmpower() { return blockEmpower; }
+
+    /** 取用一次格挡强化：取到就消耗，强化只作用于紧接着的那一次暗影普攻。 */
+    public boolean consumeBlockEmpower() {
+        if (!blockEmpower) return false;
+        blockEmpower = false;
+        return true;
+    }
+
+    /** 结束格挡的无敌窗口，但保留已经攒下的强化（切界时用它）。 */
+    public void endBlockWindow() { blockRemaining = 0.0; }
+
+    /** 影形态格挡：窗口与强化一起丢（换房、阵亡时用它）。 */
+    public void clearBlock() {
+        blockRemaining = 0.0;
+        blockEmpower = false;
+        blockFlashRemaining = 0.0;
+    }
+
+    /** 每次挡下攻击后「格挡」提示的剩余时间（秒）；0 表示不显示。 */
+    public double getBlockFlashRemaining() { return blockFlashRemaining; }
+
+    /** 「格挡」提示的剩余强度 0～1（渲染层用它做淡出）。 */
+    public double getBlockFlashRatio() {
+        return GameConfig.SHADOW_BLOCK_FLASH_TIME <= 0.0 ? 0.0
+                : Math.max(0.0, blockFlashRemaining) / GameConfig.SHADOW_BLOCK_FLASH_TIME;
+    }
+
+    /** 「格挡」提示出现的位置 X（挡下攻击处），受击当帧锁定，不随人物移动。 */
+    public double getBlockFlashX() { return blockFlashX; }
+
+    /** 「格挡」提示出现的位置 Y（挡下攻击处）。 */
+    public double getBlockFlashY() { return blockFlashY; }
 
     public DamageResult takeDamage(double damage, DamageType type) {
         return takeDamage(damage, type, Double.NaN, Double.NaN);
@@ -808,11 +970,23 @@ public final class Player {
         }
     }
 
+    /**
+     * 推进光形态蓄力与影形态格挡的计时（每帧调用）。
+     *
+     * <p>和装备临时效果一样，计时只由 {@code dt} 推进，所以暂停时蓄力/无敌窗口都会冻结。
+     * 蓄力累到满蓄时间就不再增长（保持蓄满状态，等玩家松手或按左键发射）。
+     */
+    private void updateStanceTimers(double dt) {
+        double step = Math.max(0.0, dt);
+        if (charging) chargeTime = Math.min(GameConfig.LIGHT_CHARGE_MAX_TIME, chargeTime + step);
+        blockRemaining = Math.max(0.0, blockRemaining - step);
+        blockFlashRemaining = Math.max(0.0, blockFlashRemaining - step);
+    }
+
     /** 道具提供的伤害加成。 */
     public double getItemDamageBonus() {
         return itemDamageBonus(currentWorld);
     }
-
     /** 当前世界的基础伤害（旧的整数入口，等价于 {@code (int) getCurrentBaseDamage()}）。 */
     public int getAttackDamage() {
         return (int) Math.round(getCurrentBaseDamage() * damageMultiplier(currentWorld));

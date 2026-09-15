@@ -51,7 +51,12 @@ public final class MapGenerator {
             room.connect(direction.opposite(), parent.id());
             if (hidden) {
                 parent.setHiddenExit(direction, id);
-                room.configureHiddenRoute(WorldType.SHADOW, direction.opposite());
+                // 隐藏路线要求哪种形态由种子决定：光与影都可能，不再写死成影。
+                // 这里**不复用**上面的 random 流——多消耗一个随机数会让后面每个房间的
+                // 布局与类型整体错位，已有种子的地图会被改写；所以另开一个由种子派生的流。
+                boolean lightForm = new Random(seed * 0x9E3779B97F4A7C15L + id).nextBoolean();
+                room.configureHiddenRoute(lightForm ? WorldType.LIGHT : WorldType.SHADOW,
+                        direction.opposite());
             }
             rooms.add(room);
             depths.put(id, depth);

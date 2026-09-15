@@ -68,10 +68,6 @@ public final class LoginView extends StackPane implements SceneLifecycle {
         return label;
     }
 
-    public void setNickname(String nickname) {
-        nicknameField.setText(nickname == null ? "" : nickname);
-    }
-
     public void showError(String message) {
         errorLabel.setText(message);
         nicknameField.requestFocus();

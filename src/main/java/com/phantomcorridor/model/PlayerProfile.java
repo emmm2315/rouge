@@ -28,6 +28,12 @@ public final class PlayerProfile {
         return !nickname.isEmpty();
     }
 
+    /** 选择当前登录的旅者；局外进度由 PlayerProgress 按昵称分别读取。 */
+    public void selectNickname(String nickname) {
+        this.nickname = normalizeNickname(nickname);
+        this.passwordHash = "";
+    }
+
     /** 更新本地凭据；密码允许留空，且只保存摘要。 */
     public void updateCredentials(String nickname, String password) {
         this.nickname = normalizeNickname(nickname);

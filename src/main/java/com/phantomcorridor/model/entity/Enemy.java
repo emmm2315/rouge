@@ -71,6 +71,8 @@ public final class Enemy {
     private double castGuardArcDegrees;
     /** 正面减伤的中轴方向（弧度），等于起手时锁定的瞄准角；NaN 表示未生效。 */
     private double castGuardAngleRadians = Double.NaN;
+    /** 出招预警：是否已经进入"攻击前 0.5 秒"的红色感叹号窗口。 */
+    private boolean attackWarning;
 
     /**
      * @param floor      所在层数（从 1 开始）：生命值按层增长，防御随层提高
@@ -333,12 +335,20 @@ public final class Enemy {
         return value;
     }
 
+    /**
+     * 是否已经进入「攻击前 0.5 秒」的预警窗口。
+     *
+     * <p>渲染层据此在敌人头顶画一个红色感叹号：玩家看到它在闪，就知道这一下快落下来了。
+     * 判定由 {@code EnemySystem} 在推进前摇时写入，敌人自己不认识技能表。
+     */
+    public boolean isAttackWarning() { return attackWarning; }
+
+    public void setAttackWarning(boolean attackWarning) { this.attackWarning = attackWarning; }
+
     /** 是否已锁定玩家（索敌成功）。锁定后即使被墙挡住视线也会持续追击。 */
     public boolean isAware() { return aware; }
-
     /** 索敌成功，进入追击状态。 */
     public void markAware() { aware = true; }
-
     /** 玩家切界离开本世界后丢失目标；下次回到该世界需要重新索敌并重新起手。 */
     public void loseAwareness() {
         aware = false;

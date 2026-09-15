@@ -238,13 +238,16 @@ public final class PlayerAttackSystem {
                 0.0, 1.0, 0.0, 0.0);
     }
 
-    public boolean tryAttack(Player player, double targetX, double targetY) {
-        if (player.getHp() <= 0 || player.isCastingAbility() || player.isDashing() || cooldownRemaining > 0.0) {
-            return false;
-        }
-        double[] aim = aimDirection(player, targetX, targetY);
-        double unitX = aim[0];
-        double unitY = aim[1];
+    /** 一次攻击解析出来的可执行方案：当前世界生效的全部攻击方式，以及它们各自对应的武器。 */
+    private record ResolvedAttack(List<AttackProfile> profiles, List<EquipmentType> weapons) { }
+
+    /**
+     * 把「装备栏 + 当前世界」翻译成一组可执行的攻击方案。
+     *
+     * <p>普攻与蓄力发射共用这一段：两者只有「伤害倍率、弹体尺度、是否击落敌弹」不同，
+     * 攻击方式本身必须完全一致，否则蓄力就会绕开玩家辛苦攒的武器形态。
+     */
+    private ResolvedAttack resolveAttack(Player player) {
         WorldType world = player.getCurrentWorld();
         List<EquipmentType> weapons = activeWeapons(player);
         if (weapons.isEmpty()) weapons = Collections.singletonList(null);
@@ -266,7 +269,71 @@ public final class PlayerAttackSystem {
                 resolvedWeapons.add(weapon);
             }
         }
-        if (profiles.isEmpty()) return false;
+        // weapons 里允许出现 null（表示"这一界没有改变攻击方式的武器，用基础方案"），
+        // 所以这里不能用 List.copyOf——它会拒绝 null 元素。
+        return new ResolvedAttack(List.copyOf(profiles), Collections.unmodifiableList(resolvedWeapons));
+    }
+
+    /**
+     * 光形态蓄力发射。
+     *
+     * <p>沿用当前光界生效的整套攻击方案（三叉杖的三向、贯日长杖的穿透、炽核权杖的爆裂……），
+     * 只把每个伤害包的系数整体乘上蓄力倍率（1 → 5）。弹体同时被放大并带上
+     * 「飞行中击落敌方弹幕」的能力——这就是"蓄满可以抵消敌人弹幕"。
+     *
+     * <p>这正是「装备适配」的落点：蓄力不是另一套写死的攻击，而是**当前这一套装备的强化版**。
+     *
+     * <p>蓄满（{@code fullCharge}）时再叠两条招牌效果：**无限穿透**与**命中叠满灼痕**——
+     * 于是"光界蓄满 → 切影界引爆"成为一条成立的连招。
+     *
+     * @param multiplier 蓄力倍率，由 {@link Player#consumeCharge()} 结算后给出
+     * @param fullCharge 是否蓄满
+     * @return 是否真的打出了这一发
+     */
+    public boolean fireChargedShot(Player player, double targetX, double targetY,
+                                   double multiplier, boolean fullCharge) {
+        if (player.getHp() <= 0 || player.isCastingAbility() || player.isDashing()) return false;
+        if (player.getCurrentWorld() != WorldType.LIGHT) return false;
+        ResolvedAttack resolved = resolveAttack(player);
+        if (resolved.profiles().isEmpty()) return false;
+        double scale = Math.max(1.0, multiplier);
+        List<AttackProfile> profiles = resolved.profiles().stream()
+                .map(profile -> profile.withCoefficientScale(scale)).toList();
+        double[] aim = aimDirection(player, targetX, targetY);
+        currentProfile = profiles.getFirst();
+        currentProfiles = List.copyOf(profiles);
+        player.startAttackAnimation(aim[0], aim[1], 0.0);
+        worldAttackCount++;
+        meleeAngleRadians = Math.atan2(aim[1], aim[0]);
+        for (AttackProfile profile : profiles) {
+            spawnPellets(profile, player.getX(), player.getY(), aim[0], aim[1], 0, profile.pellets(),
+                    true, fullCharge);
+        }
+        // 打完这一发依然要等这轮武器自己的攻击间隔：蓄力不是"额外白送一次普攻"。
+        cooldownRemaining = profiles.stream().mapToDouble(p -> cooldownFor(player, p)).max().orElse(0.0);
+        return true;
+    }
+
+    public boolean tryAttack(Player player, double targetX, double targetY) {
+        if (player.getHp() <= 0 || player.isCastingAbility() || player.isDashing() || cooldownRemaining > 0.0) {
+            return false;
+        }
+        double[] aim = aimDirection(player, targetX, targetY);
+        double unitX = aim[0];
+        double unitY = aim[1];
+        WorldType world = player.getCurrentWorld();
+        ResolvedAttack resolved = resolveAttack(player);
+        if (resolved.profiles().isEmpty()) return false;
+        List<EquipmentType> resolvedWeapons = resolved.weapons();
+        List<AttackProfile> profiles = new ArrayList<>(resolved.profiles());
+        // 格挡成功攒下的那一次强化：整套暗影方案整体 ×10，取用一次就消失。
+        // 放在这里而不是渲染层，是因为"下一次暗影普攻"必须和真正打出去的那一击绑定——
+        // 空按（冷却中、施法中）不该白白吃掉这次强化。
+        if (world == WorldType.SHADOW && player.hasBlockEmpower()) {
+            profiles.replaceAll(profile -> profile.withCoefficientScale(
+                    GameConfig.SHADOW_BLOCK_EMPOWER_MULTIPLIER));
+            player.consumeBlockEmpower();
+        }
         AttackProfile profile = profiles.getFirst();
         currentProfile = profile;
         currentProfiles = List.copyOf(profiles);
@@ -371,17 +438,36 @@ public final class PlayerAttackSystem {
      */
     private void spawnPellets(AttackProfile profile, double originX, double originY,
                               double unitX, double unitY, int startIndex, int count) {
+        spawnPellets(profile, originX, originY, unitX, unitY, startIndex, count, false, false);
+    }
+
+    /**
+     * 按方案生成伤害包。
+     *
+     * @param charged    是否是蓄力光弹：弹体更大、且会在飞行中击落敌方弹幕
+     * @param fullCharge 是否蓄满：无限穿透 + 命中给敌人叠满灼痕
+     */
+    private void spawnPellets(AttackProfile profile, double originX, double originY,
+                              double unitX, double unitY, int startIndex, int count,
+                              boolean charged, boolean fullCharge) {
         if (profile.world() != WorldType.LIGHT) return;
         double offset = GameConfig.PLAYER_RADIUS + GameConfig.LIGHT_PROJECTILE_RADIUS + 3.0;
         double speed = GameConfig.LIGHT_PROJECTILE_SPEED * profile.speedScale();
         double lifetime = GameConfig.LIGHT_PROJECTILE_LIFETIME * profile.lifetimeScale();
-        double radius = GameConfig.LIGHT_PROJECTILE_RADIUS * profile.radiusScale();
+        double radiusScale = charged ? GameConfig.LIGHT_CHARGE_RADIUS_SCALE : 1.0;
+        double radius = GameConfig.LIGHT_PROJECTILE_RADIUS * profile.radiusScale() * radiusScale;
+        // 蓄满的招牌是"无限穿透"：所有按方案发出去的光弹都吃这一条。
+        // 唯一例外是炽核权杖——它的身份是爆裂（光核本身没有接触伤害），
+        // 强行改成穿透会让它退化成一颗普通子弹，所以保留它的爆裂行为。
+        boolean infinitePierce = charged && fullCharge
+                && profile.shape() != AttackProfile.ProjectileShape.CORE;
 
         for (int i = 0; i < count; i++) {
             int index = startIndex + i;
             // 多包且有间隔的方案（蚀界仪二连发）：第一颗立即出手，后面的交给延迟通道
             // ——「间隔 0.10 秒」是设计文档的硬要求，不能一次全喷出去。
-            if (index > startIndex && profile.pelletInterval() > 0.0) {
+            // 蓄力弹例外：它是一发整体打出去的"重击"，拆分反而读不出蓄力的分量，所以一次全放。
+            if (index > startIndex && profile.pelletInterval() > 0.0 && !charged) {
                 schedule(PendingKind.PROJECTILE, profile.pelletInterval() * (index - startIndex), profile,
                         originX, originY, unitX, unitY, index);
                 continue;
@@ -393,8 +479,15 @@ public final class PlayerAttackSystem {
                     originX + rotatedX * offset, originY + rotatedY * offset,
                     rotatedX * speed, rotatedY * speed,
                     radius, WorldType.LIGHT, lifetime,
-                    profile.shape(), profile.coefficient(index), behaviourFor(profile));
+                    profile.shape(), profile.coefficient(index),
+                    infinitePierce ? Projectile.Behaviour.PIERCE : behaviourFor(profile));
             configure(projectile, profile);
+            // 穿透次数要写在 configure 之后：configure 会按方案里的 extraHits 覆盖它。
+            if (infinitePierce) {
+                projectile.setExtraHits(GameConfig.LIGHT_CHARGE_PIERCE_MAX);
+                projectile.setScorchStacks(GameConfig.LIGHT_CHARGE_SCORCH_STACKS);
+            }
+            projectile.setClearsEnemyBullets(charged);
             projectiles.add(projectile);
         }
     }

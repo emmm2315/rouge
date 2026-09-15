@@ -7,6 +7,9 @@ import com.phantomcorridor.model.ItemType;
 import com.phantomcorridor.model.Pickup;
 import com.phantomcorridor.model.RoomType;
 import com.phantomcorridor.model.entity.Player;
+import java.util.Collections;
+import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * 房间内容（奖励、商店、宝箱、事件）的生成与交互规则。
@@ -49,6 +52,7 @@ public final class RoomContentSystem {
      * 否则玩家一按 ESC 就被重新追问，永远回不到暂停。走开一段距离或把它捡走即可解除。
      */
     private Pickup dismissedEquipment;
+    private final Set<EquipmentType> collectedEquipment = EnumSet.noneOf(EquipmentType.class);
 
     public void reset(long dungeonSeed, int floor) {
         this.dungeonSeed = dungeonSeed;
@@ -272,7 +276,9 @@ public final class RoomContentSystem {
             return Outcome.EQUIPMENT_SELECTION;
         }
         if (!player.spendCoins(price)) return Outcome.HANDLED;
-        player.equip(EquipmentType.values()[offer.amount()]);
+        EquipmentType equipment = EquipmentType.values()[offer.amount()];
+        player.equip(equipment);
+        collectedEquipment.add(equipment);
         room.loot().removePickup(offer);
         selectedOffer = null;
         return Outcome.HANDLED;
@@ -290,7 +296,9 @@ public final class RoomContentSystem {
             pendingPurchase = false;
             return Outcome.EQUIPMENT_SELECTION;
         }
-        player.equip(EquipmentType.values()[Math.floorMod(pickup.amount(), EquipmentType.values().length)]);
+        EquipmentType equipment = EquipmentType.values()[Math.floorMod(pickup.amount(), EquipmentType.values().length)];
+        player.equip(equipment);
+        collectedEquipment.add(equipment);
         room.loot().removePickup(pickup);
         return Outcome.HANDLED;
     }
@@ -316,6 +324,7 @@ public final class RoomContentSystem {
         if (pendingPurchase && !player.spendCoins(priceOf(pendingEquipment))) return false;
         EquipmentType incoming = EquipmentType.values()[Math.floorMod(pendingEquipment.amount(), EquipmentType.values().length)];
         EquipmentType discarded = player.replaceEquipment(slot, incoming);
+        collectedEquipment.add(incoming);
         room.loot().removePickup(pendingEquipment);
         if (discarded != null) room.loot().addPickup(new Pickup(Pickup.Type.EQUIPMENT,
                 pendingEquipment.x(), pendingEquipment.y(), discarded.ordinal()));
@@ -389,6 +398,8 @@ public final class RoomContentSystem {
 
     /** 本次替换需要支付的金币；不是购买时为 0。 */
     public int pendingPrice() { return pendingPurchase ? priceOf(pendingEquipment) : 0; }
+    /** 本局实际拾取过的装备，替换后丢弃也会保留在图鉴记录中。 */
+    public Set<EquipmentType> collectedEquipment() { return Collections.unmodifiableSet(collectedEquipment); }
 
     private Outcome openChest(Room room) {
         RoomLoot loot = room.loot();
