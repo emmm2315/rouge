@@ -211,7 +211,14 @@ public class MainMenuView extends StackPane implements SceneLifecycle {
         EquipmentType[] equipment = EquipmentType.values();
         for (int index = 0; index < equipment.length; index++) grid.add(equipmentCard(equipment[index], progress), index % 3, index / 3);
         ScrollPane scroll = new ScrollPane(grid);
-        scroll.setFitToWidth(true); scroll.setPrefViewportHeight(510); scroll.getStyleClass().add("progress-scroll");
+        // 三列卡片在 760px 内完整排开；图鉴只需要纵向滚动，禁止无意义的横向滚动条。
+        scroll.setFitToWidth(true);
+        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        scroll.setPrefViewportWidth(760);
+        scroll.setMaxWidth(760);
+        scroll.setPrefViewportHeight(510);
+        scroll.getStyleClass().add("progress-scroll");
         Label note = new Label("只展示本档案实际拾取过的装备；同名装备会叠加，强化规则在每张卡片中列出。");
         note.getStyleClass().add("hint-text");
 

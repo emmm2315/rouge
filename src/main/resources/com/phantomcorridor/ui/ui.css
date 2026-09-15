@@ -178,6 +178,12 @@
 }
 
 .progress-scroll { -fx-background: rgba(8, 7, 12, 0.72); -fx-background-color: rgba(8, 7, 12, 0.72); -fx-border-color: rgba(181, 153, 103, 0.48); }
+.progress-scroll > .scroll-bar:horizontal { -fx-pref-height: 0; -fx-max-height: 0; -fx-opacity: 0; }
+.progress-scroll > .scroll-bar:vertical { -fx-pref-width: 9px; -fx-background-color: transparent; -fx-padding: 2px; }
+.progress-scroll > .scroll-bar:vertical .track { -fx-background-color: rgba(255, 255, 255, 0.07); -fx-background-radius: 5px; }
+.progress-scroll > .scroll-bar:vertical .thumb { -fx-background-color: linear-gradient(to bottom, #d4aa5c, #8b5abb); -fx-background-radius: 5px; }
+.progress-scroll > .scroll-bar:vertical .increment-button,
+.progress-scroll > .scroll-bar:vertical .decrement-button { -fx-padding: 0; -fx-opacity: 0; }
 .equipment-card, .equipment-card-locked { -fx-padding: 10px; -fx-min-width: 220px; -fx-min-height: 135px; -fx-background-color: rgba(20, 16, 28, 0.88); -fx-border-width: 2px; }
 .equipment-card { -fx-border-color: rgba(232, 189, 104, 0.66); }
 .equipment-card-locked { -fx-border-color: rgba(130, 120, 142, 0.35); -fx-opacity: 0.60; }
